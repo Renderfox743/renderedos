@@ -43,137 +43,111 @@
   <div class="bar"><span id="nano-title">nano</span><span id="nano-modified"></span></div>
   <div class="body"><div class="lines"><div class="gutter" id="nano-gutter"></div><div class="text" id="nano-text"></div></div></div>
   <div class="status" id="nano-status"></div>
-  <div class="hint"><span class="k">^S</span> Save  <span class="k">^X</span> Exit  <span class="k">^K</span> Cut  <span class="k">^U</span> Paste</div>
+  <div class="hint"><span class="k">^S</span> Save  <span class="k">^X</span> Exit  <span class="k">^K</span> Cut  <span class="k">^U</span> Paste  <span class="k">^G</span> Help</div>
 </div>
 
 <script>
 "use strict";
-var VERSION='3.0.0';
-var K_FS='renderedos.fs.v3';
-var K_META='renderedos.meta.v3';
-var K_STATE='renderedos.state.v3';
+/* ═══════════════════════════════════════════════════════════
+   RenderedOS 3.0 "Kernel"
+   The filesystem is the source of truth.
+   ═══════════════════════════════════════════════════════════ */
+const VERSION = '3.0.0';
+const K_FS = 'renderedos.fs.v3';
+const K_META = 'renderedos.meta.v3';
+const K_STATE = 'renderedos.state.v3';
 
-var sleep=function(ms){return new Promise(function(r){setTimeout(r,ms);});};
-function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
-function pad(s,n){return String(s).padEnd(n);}
-function clamp(n,a,b){return Math.max(a,Math.min(b,n));}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const escHtml = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const pad = (s,n) => String(s).padEnd(n);
+const clamp = (n,a,b) => Math.max(a, Math.min(b, n));
 
-/* ANSI -> HTML */
-var FG={30:'#3b4048',31:'#f7768e',32:'#9ece6a',33:'#e0af68',34:'#7aa2f7',35:'#bb9af7',36:'#7dcfff',37:'#c8ccd4',90:'#565d6b',91:'#ff8fa3',92:'#b9f27c',93:'#f5c97b',94:'#9ab8ff',95:'#d0b0ff',96:'#9fe0ff',97:'#ffffff'};
-var BG={40:'#3b4048',41:'#f7768e',42:'#9ece6a',43:'#e0af68',44:'#7aa2f7',45:'#bb9af7',46:'#7dcfff',47:'#c8ccd4',100:'#565d6b',101:'#ff8fa3',102:'#b9f27c',103:'#f5c97b',104:'#9ab8ff',105:'#d0b0ff',106:'#9fe0ff',107:'#ffffff'};
-function sWrap(t,st){
-  if(!t)return '';
-  var c='';
-  if(st.fg)c+='color:'+st.fg+';';
-  if(st.bg)c+='background:'+st.bg+';';
-  if(st.bold)c+='font-weight:600;';
-  if(st.italic)c+='font-style:italic;';
-  if(st.underline)c+='text-decoration:underline;';
-  if(st.dim)c+='opacity:.55;';
-  var b=escHtml(t);
-  return c?'<span style="'+c+'">'+b+'</span>':b;
-}
+/* ── ANSI → HTML ── */
+const FG={30:'#3b4048',31:'#f7768e',32:'#9ece6a',33:'#e0af68',34:'#7aa2f7',35:'#bb9af7',36:'#7dcfff',37:'#c8ccd4',90:'#565d6b',91:'#ff8fa3',92:'#b9f27c',93:'#f5c97b',94:'#9ab8ff',95:'#d0b0ff',96:'#9fe0ff',97:'#ffffff'};
+const BG={40:'#3b4048',41:'#f7768e',42:'#9ece6a',43:'#e0af68',44:'#7aa2f7',45:'#bb9af7',46:'#7dcfff',47:'#c8ccd4',100:'#565d6b',101:'#ff8fa3',102:'#b9f27c',103:'#f5c97b',104:'#9ab8ff',105:'#d0b0ff',106:'#9fe0ff',107:'#ffffff'};
+function sWrap(t,st){if(!t)return '';let c='';if(st.fg)c+='color:'+st.fg+';';if(st.bg)c+='background:'+st.bg+';';if(st.bold)c+='font-weight:600;';if(st.italic)c+='font-style:italic;';if(st.underline)c+='text-decoration:underline;';if(st.dim)c+='opacity:.55;';const b=escHtml(t);return c?'<span style="'+c+'">'+b+'</span>':b;}
 function renderAnsi(str){
   str=String(str==null?'':str);
-  var st={fg:null,bg:null,bold:false,dim:false,italic:false,underline:false};
-  var html='';
-  var rest=str;
-  var re=/\x1b\[([0-9;]*)m/;
+  const st={fg:null,bg:null,bold:false,dim:false,italic:false,underline:false};
+  let html='',rest=str;const re=/\x1b\[([0-9;]*)m/;
   while(rest.length){
-    var m=re.exec(rest);
+    const m=re.exec(rest);
     if(!m){html+=sWrap(rest,st);break;}
     if(m.index>0)html+=sWrap(rest.slice(0,m.index),st);
-    var codes=m[1].split(';').map(function(x){return x===''?0:parseInt(x,10);});
-    for(var i=0;i<codes.length;i++){
-      var c=codes[i];
+    let codes=m[1].split(';').map(x=>x===''?0:parseInt(x,10));
+    for(const c of codes){
       if(c===0){st.fg=null;st.bg=null;st.bold=false;st.dim=false;st.italic=false;st.underline=false;}
-      else if(c===1)st.bold=true;
-      else if(c===2)st.dim=true;
-      else if(c===3)st.italic=true;
-      else if(c===4)st.underline=true;
-      else if(c===22){st.bold=false;st.dim=false;}
-      else if(c===23)st.italic=false;
-      else if(c===24)st.underline=false;
-      else if(c===39)st.fg=null;
-      else if(c===49)st.bg=null;
-      else if(FG[c])st.fg=FG[c];
-      else if(BG[c])st.bg=BG[c];
+      else if(c===1)st.bold=true;else if(c===2)st.dim=true;else if(c===3)st.italic=true;else if(c===4)st.underline=true;
+      else if(c===22){st.bold=false;st.dim=false;}else if(c===23)st.italic=false;else if(c===24)st.underline=false;
+      else if(c===39)st.fg=null;else if(c===49)st.bg=null;
+      else if(FG[c])st.fg=FG[c];else if(BG[c])st.bg=BG[c];
     }
     rest=rest.slice(m.index+m[0].length);
   }
   return html;
 }
 
-/* DOM */
-var screenEl=document.getElementById('screen');
-var outputEl=document.getElementById('output');
-var inputEl=document.getElementById('cmd');
-var promptEl=document.getElementById('prompt');
-var inputLine=document.getElementById('inputline');
+/* ── DOM ── */
+const screenEl=document.getElementById('screen'),outputEl=document.getElementById('output');
+const inputEl=document.getElementById('cmd'),promptEl=document.getElementById('prompt'),inputLine=document.getElementById('inputline');
 function scrollBottom(){screenEl.scrollTop=screenEl.scrollHeight;}
 function print(text,cls){
-  var s=String(text==null?'':text);
-  if(s.endsWith('\n'))s=s.slice(0,-1);
-  var parts=s.split('\n');
-  var frag=document.createDocumentFragment();
-  for(var i=0;i<parts.length;i++){
-    var d=document.createElement('div');
-    d.className='line'+(cls?' '+cls:'');
-    d.innerHTML=renderAnsi(parts[i]);
-    frag.appendChild(d);
-  }
-  outputEl.appendChild(frag);
-  scrollBottom();
+  let s=String(text==null?'':text);if(s.endsWith('\n'))s=s.slice(0,-1);
+  const parts=s.split('\n');const frag=document.createDocumentFragment();
+  for(const p of parts){const d=document.createElement('div');d.className='line'+(cls?' '+cls:'');d.innerHTML=renderAnsi(p);frag.appendChild(d);}
+  outputEl.appendChild(frag);scrollBottom();
 }
 function clearScreen(){outputEl.innerHTML='';screenEl.scrollTop=0;}
-function makeLive(){
-  var d=document.createElement('div');
-  d.className='line';
-  outputEl.appendChild(d);
-  return {set:function(t){d.innerHTML=renderAnsi(t);scrollBottom();},el:d};
-}
+function makeLive(){const d=document.createElement('div');d.className='line';outputEl.appendChild(d);return{set(t){d.innerHTML=renderAnsi(t);scrollBottom();},el:d};}
 
-/* ══════════ VFS ══════════ */
-var HOME='/home/user';
-var NOW=Date.now();
-var DAY=86400000;
-function F(c,o){var x={type:'file',content:c||'',mtime:NOW,mode:'644',owner:'root',group:'root'};if(o)for(var k in o)x[k]=o[k];return x;}
-function Dir(ch,o){var x={type:'dir',children:ch||{},mtime:NOW,mode:'755',owner:'root',group:'root'};if(o)for(var k in o)x[k]=o[k];return x;}
+/* ═══════════════════════════════════════════════════════════
+   VFS
+   ═══════════════════════════════════════════════════════════ */
+const HOME='/home/user';
+const NOW=Date.now(),DAY=86400000;
+const F=(c,o)=>Object.assign({type:'file',content:c||'',mtime:NOW,mode:'644',owner:'root',group:'root'},o||{});
+const Dir=(ch,o)=>Object.assign({type:'dir',children:ch||{},mtime:NOW,mode:'755',owner:'root',group:'root'},o||{});
 
 function defaultFS(){
   return Dir({
     boot: Dir({
-      'vmlinuz-rendered': F('# RenderedOS kernel image 6.9.2-rendered\n# (do not delete — system cannot boot without this)\n'),
-      'initrd.img-rendered': F('# RenderedOS initial ramdisk\n# (do not delete — system cannot mount root without this)\n'),
-      'config-6.9.2-rendered': F('CONFIG_X86_64=y\nCONFIG_SMP=y\n',{mode:'600'})
+      'vmlinuz-rendered': F('# RenderedOS kernel image 6.9.2-rendered\n# (do not delete — system cannot boot without this)\n',{mode:'644'}),
+      'initrd.img-rendered': F('# RenderedOS initial ramdisk\n# (do not delete — system cannot mount root without this)\n',{mode:'644'}),
+      'config-6.9.2-rendered': F('CONFIG_X86_64=y\nCONFIG_SMP=y\nCONFIG_MODULES=y\n',{mode:'600'}),
+      'System.map-6.9.2-rendered': F('0000000000000000 T startup_64\n',{mode:'600'})
     }),
     etc: Dir({
-      'os-release': F('NAME="RenderedOS"\nVERSION="3.0 (Kernel)"\nID=renderedos\nID_LIKE=linux\nPRETTY_NAME="RenderedOS 3.0 (Kernel)"\nVERSION_ID="3.0"\n'),
+      'os-release': F('NAME="RenderedOS"\nVERSION="3.0 (Kernel)"\nID=renderedos\nID_LIKE=linux\nPRETTY_NAME="RenderedOS 3.0 (Kernel)"\nVERSION_ID="3.0"\nHOME_URL="https://rendered.os/"\n'),
       'hostname': F('rendered\n'),
       'hosts': F('127.0.0.1       localhost\n127.0.1.1       rendered\n::1             localhost ip6-localhost ip6-loopback\n'),
-      'resolv.conf': F('nameserver 1.1.1.1\nnameserver 8.8.8.8\n'),
+      'resolv.conf': F('# resolver configuration\nnameserver 1.1.1.1\nnameserver 8.8.8.8\n'),
       'passwd': F('root:x:0:0:root:/root:/bin/rsh\ndaemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin\nuser:x:1000:1000:User,,,:/home/user:/bin/rsh\nnobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin\n'),
       'shadow': F('root:*:19000:0:99999:7:::\nuser:*:19000:0:99999:7:::\n',{mode:'640'}),
       'group': F('root:x:0:\ndaemon:x:1:\nuser:x:1000:\nsudo:x:27:user\n'),
-      'sudoers': F('# sudoers\nDefaults env_reset\nroot ALL=(ALL:ALL) ALL\nuser ALL=(ALL:ALL) NOPASSWD: ALL\n',{mode:'440'}),
+      'sudoers': F('# sudoers — RenderedOS\nDefaults env_reset\nroot ALL=(ALL:ALL) ALL\nuser ALL=(ALL:ALL) NOPASSWD: ALL\n',{mode:'440'}),
       'fstab': F('# <file system> <mount point> <type>  <options>       <dump> <pass>\n/dev/vda1       /             ext4    errors=remount-ro 0      1\ntmpfs           /tmp          tmpfs   defaults          0      0\nproc            /proc         proc    defaults          0      0\nsysfs           /sys          sysfs   defaults          0      0\ndevtmpfs        /dev          devtmpfs defaults          0      0\n'),
       'shells': F('/bin/sh\n/bin/rsh\n/bin/false\n'),
-      'motd': F('Welcome to RenderedOS 3.0 (Kernel)\n\n * Documentation:  man <command>\n * Support:        help\n\nThis system will not boot if you delete /boot or /etc/fstab.\nThat is intentional.\n'),
-      'inittab': F('id:3:initdefault:\nsi::sysinit:/etc/init.d/rcS\n'),
+      'motd': F('Welcome to RenderedOS 3.0 (Kernel)\n\n * Documentation:  man <command>\n * Support:        help\n * Easter eggs:    cat ~/.secrets\n\nThis system will not boot if you delete /boot or /etc/fstab.\nThat is intentional.\n'),
+      'inittab': F('# /etc/inittab\nid:3:initdefault:\nsi::sysinit:/etc/init.d/rcS\n'),
       'timezone': F('UTC\n'),
       'machine-id': F('a1b2c3d4e5f60718\n'),
+      'issue': F('RenderedOS 3.0 \\n \\l\n'),
       'init.d': Dir({
-        'rcS': F('ExecStart=/bin/true\nCritical=yes\nDescription=System initialization\n'),
-        'rcompositor': F('ExecStart=/sbin/rcompositor\nCritical=no\nDescription=Rendered Compositor\n'),
-        'rsh': F('ExecStart=/bin/rsh\nCritical=yes\nDescription=Rendered Shell\n'),
-        'network': F('ExecStart=/bin/true\nCritical=no\nDescription=Network\n'),
-        'syslog': F('ExecStart=/bin/true\nCritical=no\nDescription=System Logging Service\n')
+        'rcS': F('#! /bin/sh\n# System initialization\nExecStart=/bin/true\nCritical=yes\nDescription=System initialization\n'),
+        'rcompositor': F('#! /bin/sh\n# Rendered compositor\nExecStart=/sbin/rcompositor\nCritical=no\nDescription=Rendered Compositor\n'),
+        'rsh': F('#! /bin/sh\n# Rendered shell service\nExecStart=/bin/rsh\nCritical=yes\nDescription=Rendered Shell\n'),
+        'network': F('#! /bin/sh\n# Network stack\nExecStart=/bin/true\nCritical=no\nDescription=Network\n'),
+        'cron': F('#! /bin/sh\n# Job scheduler\nExecStart=/bin/true\nCritical=no\nDescription=Periodic command scheduler\n'),
+        'syslog': F('#! /bin/sh\n# System logger\nExecStart=/bin/true\nCritical=no\nDescription=System Logging Service\n')
       })
     }),
-    bin: Dir({}),
+    bin: Dir({
+      /* populated by ensureBins() */
+    }),
     sbin: Dir({
-      'rinit': F('#! /bin/rsh\n# PID 1\n',{mode:'755'}),
-      'rcompositor': F('#! /bin/rsh\n',{mode:'755'})
+      'rinit': F('#! /bin/rsh\n# PID 1 — never kill\n',{mode:'755'}),
+      'rcompositor': F('#! /bin/rsh\n# Rendered compositor\n',{mode:'755'}),
+      'shutdown': F('#! /bin/rsh\n',{mode:'755'})
     }),
     usr: Dir({
       bin: Dir({}),
@@ -184,25 +158,83 @@ function defaultFS(){
     var: Dir({
       log: Dir({
         'syslog': F(''),
+        'auth.log': F(''),
         'dmesg': F(''),
-        'auth.log': F('')
+        'kern.log': F('')
       }),
-      spool: Dir({}),
+      spool: Dir({cron:Dir({})}),
       run: Dir({}),
       tmp: Dir({})
     }),
     home: Dir({
       user: Dir({
-        'README.md': F('# RenderedOS 3.0 "Kernel"\n\nThis is a real OS simulation. The filesystem is not decorative.\n\n## What breaks the system\n\n    rm /boot/vmlinuz-rendered     -> next reboot: kernel panic\n    rm /etc/fstab                 -> next reboot: no root fs\n    rm /etc/passwd                -> next reboot: no users\n    rm /sbin/rinit                -> next reboot: no init\n    rm /bin/rsh                   -> next reboot: no shell\n    rm /bin/curl                  -> curl: command not found\n\nTo recover:\n\n    install\n    reboot\n\n## What actually works\n\n    curl https://api.github.com/users/torvalds\n    dig github.com\n    sha256sum README.md\n    gzip notes.txt\n    tar -cf backup.tar Documents/\n    node -e "console.log(1+1)"\n    weather London\n    define serendipity\n',{owner:'user',group:'user',mtime:NOW-3*DAY}),
-        'notes.txt': F('things that matter\n-----------------\n/boot/*        -- kernel + initrd; deleting them bricks boot\n/etc/fstab     -- mount table; boot reads it\n/etc/passwd    -- user database; boot reads it\n/etc/init.d/*  -- services; boot executes them\n/sbin/rinit    -- PID 1; must exist\n/bin/rsh       -- the shell; must exist\n/bin/<cmd>     -- every external command has a stub\n\ndelete any of the above, then reboot and watch.\n',{owner:'user',group:'user',mtime:NOW-DAY}),
-        '.secrets': F('sudo make me a sandwich\nxyzzy\n42\ncoffee, tea\ndance, sing, hack, wizard\nnorth, south, east, west, look\nwake up\n:wq  :q!  please  hello\nsudo rm -rf / --no-preserve-root\ncd /dev/null  cat /dev/zero\ngit commit -m "fix"\n',{mode:'600',owner:'user',group:'user'}),
-        '.bashrc': F('export EDITOR=nano\nalias ll=\'ls -l\'\nalias la=\'ls -la\'\nalias ..=\'cd ..\'\n',{owner:'user',group:'user'}),
-        'hello.js': F('var name = process.argv[2] || "world";\nconsole.log("hello, " + name);\n',{owner:'user',group:'user'}),
-        'fib.js': F('var n = parseInt(process.argv[2] || "10", 10);\nvar a = 0, b = 1, out = [];\nfor (var i = 0; i < n; i++) { out.push(a); var t = a + b; a = b; b = t; }\nconsole.log("fib(" + n + ") = " + out.join(", "));\n',{owner:'user',group:'user'}),
+        'README.md': F(`# RenderedOS 3.0 "Kernel"
+
+This is a real OS simulation. The filesystem is not decorative.
+
+## What breaks the system
+
+    rm /boot/vmlinuz-rendered     → next reboot: kernel panic
+    rm /boot/initrd.img-rendered  → next reboot: kernel panic
+    rm /etc/fstab                 → next reboot: no root fs
+    rm /etc/passwd                → next reboot: no users
+    rm /sbin/rinit                → next reboot: no init
+    rm /bin/rsh                   → next reboot: no shell
+    rm /bin/curl                  → curl: command not found
+    rm -r /etc/init.d             → next reboot: no services
+
+To recover from a broken system:
+
+    reboot       → watch it panic
+    install      → reinstall the base system
+    reboot       → boot cleanly
+
+## What actually works
+
+    curl https://api.github.com/users/torvalds
+    dig github.com
+    sha256sum README.md
+    gzip notes.txt    → creates notes.txt.gz
+    tar -cf backup.tar Documents/
+    node -e "console.log(1+1)"
+    weather London
+    define serendipity
+
+`,{mtime:NOW-3*DAY,owner:'user',group:'user'}),
+        'notes.txt': F(`things that matter
+-----------------
+/boot/*        — kernel + initrd; deleting them bricks boot
+/etc/fstab     — mount table; boot reads it
+/etc/passwd    — user database; boot reads it
+/etc/init.d/*  — services; boot executes them
+/sbin/rinit    — PID 1; must exist
+/bin/rsh       — the shell; must exist
+/bin/<cmd>     — every external command has a stub
+
+delete any of the above, then \`reboot\` and watch.
+`,{mtime:NOW-1*DAY,owner:'user',group:'user'}),
+        '.secrets': F(`sudo make me a sandwich
+xyzzy
+42
+coffee, tea
+dance, sing, hack, wizard
+north, south, east, west, look
+wake up
+panic, bsod
+:wq   :q!   please   hello
+man woman   man bear   man page
+sudo rm -rf / --no-preserve-root
+cd /dev/null   cat /dev/zero
+git commit -m "fix"
+`,{mode:'600',owner:'user',group:'user'}),
+        '.bashrc': F(`export EDITOR=nano\nalias ll='ls -l'\nalias la='ls -la'\nalias ..='cd ..'\n`,{owner:'user',group:'user'}),
+        'hello.js': F(`const name = process.argv[2] || 'world';
+console.log('hello, ' + name);
+`,{owner:'user',group:'user'}),
         projects: Dir({}, {owner:'user',group:'user'}),
         Documents: Dir({'letter.txt': F('Dear user,\n\nThank you for booting RenderedOS. It is now a real system.\n\nYours,\n  the management\n',{owner:'user',group:'user'})}, {owner:'user',group:'user'}),
         '.config': Dir({}, {owner:'user',group:'user'})
-      }, {owner:'user',group:'user'})
+      }, {owner:'user',group:'user',mode:'755'})
     }),
     root: Dir({}, {owner:'root',group:'root',mode:'700'}),
     tmp: Dir({}, {mode:'1777'}),
@@ -228,37 +260,31 @@ function defaultFS(){
   }, {owner:'root',group:'root'});
 }
 
-/* ══════════ Persistence ══════════ */
-var FS=null;
-
+/* ── Persistence ── */
+let FS = null;
 function ser(n){
-  if(n.type==='file'){
-    var o={t:'f',c:n.content,m:n.mtime,o:n.mode,u:n.owner,g:n.group};
-    if(n.binary)o.b=true;
-    return o;
-  }
-  var k={};
-  for(var x in n.children){
-    var c=n.children[x];
-    if(c.ro)continue;
+  if(n.type==='file'){const o={t:'f',c:n.content,m:n.mtime,o:n.mode,u:n.owner,g:n.group};if(n.binary)o.b=true;return o;}
+  const k={};
+  for(const x of Object.keys(n.children)){
+    const c=n.children[x];if(c.ro)continue;
     k[x]=ser(c);
   }
-  return {t:'d',m:n.mtime,o:n.mode,u:n.owner,g:n.group,k:k,ro:n.ro};
+  return {t:'d',m:n.mtime,o:n.mode,u:n.owner,g:n.group,k,ro:n.ro};
 }
 function deser(d){
   if(!d||typeof d!=='object')return null;
   if(d.t==='f')return F(d.c||'',{mtime:d.m||NOW,mode:d.o||'644',owner:d.u||'root',group:d.g||'root',binary:!!d.b});
   if(d.t==='d'){
-    var k={};
-    for(var x in (d.k||{}))k[x]=deser(d.k[x]);
+    const k={};
+    for(const x of Object.keys(d.k||{}))k[x]=deser(d.k[x]);
     return Dir(k,{mtime:d.m||NOW,mode:d.o||'755',owner:d.u||'root',group:d.g||'root',ro:!!d.ro});
   }
   return null;
 }
 function mergeFS(base,saved){
   if(!saved||saved.type!=='dir'||base.type!=='dir')return base;
-  for(var k in saved.children){
-    var s=saved.children[k],b=base.children[k];
+  for(const k of Object.keys(saved.children)){
+    const s=saved.children[k],b=base.children[k];
     if(!b)base.children[k]=s;
     else if(b.ro)continue;
     else if(b.type==='dir'&&s.type==='dir')mergeFS(b,s);
@@ -268,7 +294,7 @@ function mergeFS(base,saved){
 }
 function saveFS(){
   try{
-    var j=JSON.stringify(ser(FS));
+    const j=JSON.stringify(ser(FS));
     localStorage.setItem(K_FS,j);
     localStorage.setItem(K_META,JSON.stringify({version:VERSION,savedAt:Date.now(),bytes:j.length}));
     return true;
@@ -276,143 +302,132 @@ function saveFS(){
 }
 function loadFS(){
   try{
-    var meta=JSON.parse(localStorage.getItem(K_META)||'null');
+    const meta=JSON.parse(localStorage.getItem(K_META)||'null');
     if(meta&&meta.version!==VERSION){clearStorage();return false;}
-    var raw=localStorage.getItem(K_FS);
+    const raw=localStorage.getItem(K_FS);
     if(!raw)return false;
-    var r=deser(JSON.parse(raw));
+    const r=deser(JSON.parse(raw));
     if(r){FS=mergeFS(defaultFS(),r);return true;}
     return false;
   }catch(e){console.warn('loadFS',e);return false;}
 }
-function clearStorage(){
-  try{
-    localStorage.removeItem(K_FS);
-    localStorage.removeItem(K_META);
-    localStorage.removeItem(K_STATE);
-  }catch(e){}
-}
+function clearStorage(){try{localStorage.removeItem(K_FS);localStorage.removeItem(K_META);localStorage.removeItem(K_STATE);}catch(e){}}
 
-/* ══════════ Paths ══════════ */
+/* ── Paths ── */
 function splitPath(p){return String(p).split('/').filter(Boolean);}
 function resolvePath(cwd,p){
   if(p===undefined||p===null||p==='')return cwd;
   p=String(p);
   if(p==='~')p=HOME;
-  else if(p.indexOf('~/')===0)p=HOME+p.slice(1);
-  var parts=p.charAt(0)==='/'?[]:splitPath(cwd);
-  var segs=splitPath(p);
-  for(var i=0;i<segs.length;i++){
-    var s=segs[i];
-    if(s==='.')continue;
-    if(s==='..'){parts.pop();continue;}
-    parts.push(s);
-  }
+  else if(p.startsWith('~/'))p=HOME+p.slice(1);
+  let parts=p.startsWith('/')?[]:splitPath(cwd);
+  for(const s of splitPath(p)){if(s==='.')continue;if(s==='..'){parts.pop();continue;}parts.push(s);}
   return '/'+parts.join('/');
 }
 function getNode(path){
-  var parts=splitPath(path);
-  var n=FS;
-  for(var i=0;i<parts.length;i++){
-    if(!n||n.type!=='dir'||!n.children[parts[i]])return null;
-    n=n.children[parts[i]];
+  const parts=splitPath(path);
+  let n=FS;
+  for(const p of parts){
+    if(!n||n.type!=='dir'||!n.children[p])return null;
+    n=n.children[p];
   }
   return n;
 }
 function getParent(path){
-  var parts=splitPath(path);
-  var name=parts.pop();
-  return {parent:getNode('/'+parts.join('/')),name:name};
+  const parts=splitPath(path);
+  const name=parts.pop();
+  return {parent:getNode('/'+parts.join('/')),name};
 }
 function ensureDir(path){
-  var parts=splitPath(path);
-  var n=FS;
-  for(var i=0;i<parts.length;i++){
-    if(!n.children[parts[i]])n.children[parts[i]]=Dir({});
-    n=n.children[parts[i]];
+  const parts=splitPath(path);
+  let n=FS;
+  for(const p of parts){
+    if(!n.children[p])n.children[p]=Dir({});
+    n=n.children[p];
     if(n.type!=='dir')return null;
   }
   return n;
 }
 function writeFile(path,content,append){
-  var gp=getParent(path);
-  if(!gp.parent||gp.parent.type!=='dir'||gp.parent.ro)return false;
-  var ex=gp.parent.children[gp.name];
+  const {parent,name}=getParent(path);
+  if(!parent||parent.type!=='dir'||parent.ro)return false;
+  const ex=parent.children[name];
   if(ex&&ex.type==='dir')return false;
   if(ex&&append){ex.content+=content;ex.mtime=Date.now();}
-  else gp.parent.children[gp.name]=F(content,{mtime:Date.now()});
+  else parent.children[name]=F(content,{mtime:Date.now()});
   return true;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   SYSTEM CONFIG READERS
+   ═══════════════════════════════════════════════════════════ */
 function readFile(path){
-  var n=getNode(path);
+  const n=getNode(path);
   if(!n||n.type!=='file')return null;
   return n.content;
 }
-
-/* ══════════ Config readers ══════════ */
 function readHostname(){
-  var c=readFile('/etc/hostname');
+  const c=readFile('/etc/hostname');
   if(!c)return null;
   return c.trim().split('\n')[0]||null;
 }
 function readPasswd(){
-  var c=readFile('/etc/passwd');
+  const c=readFile('/etc/passwd');
   if(!c)return null;
-  var lines=c.split('\n').filter(function(l){return l.trim()&&l.charAt(0)!=='#';});
-  return lines.map(function(line){
-    var p=line.split(':');
+  return c.split('\n').filter(l=>l.trim()&&!l.startsWith('#')).map(line=>{
+    const p=line.split(':');
     return {name:p[0],pass:p[1],uid:+p[2],gid:+p[3],gecos:p[4],home:p[5],shell:p[6]};
   });
 }
 function readFstab(){
-  var c=readFile('/etc/fstab');
+  const c=readFile('/etc/fstab');
   if(!c)return null;
-  var lines=c.split('\n').filter(function(l){return l.trim()&&l.trim().charAt(0)!=='#';});
-  return lines.map(function(line){
-    var p=line.split(/\s+/);
-    return {device:p[0],mount:p[1],type:p[2],options:p[3]||'defaults'};
+  return c.split('\n').filter(l=>l.trim()&&!l.trim().startsWith('#')).map(line=>{
+    const p=line.split(/\s+/);
+    return {device:p[0],mount:p[1],type:p[2],options:p[3]||'defaults',dump:p[4]||'0',pass:p[5]||'0'};
   });
 }
 function readOsRelease(){
-  var c=readFile('/etc/os-release');
+  const c=readFile('/etc/os-release');
   if(!c)return null;
-  var o={};
-  var lines=c.split('\n');
-  for(var i=0;i<lines.length;i++){
-    var m=lines[i].match(/^([A-Z_]+)="?([^"]*)"?$/);
+  const o={};
+  for(const line of c.split('\n')){
+    const m=line.match(/^([A-Z_]+)="?([^"]*)"?$/);
     if(m)o[m[1]]=m[2];
   }
   return o;
 }
 function readMOTD(){
-  return readFile('/etc/motd')||'';
+  const c=readFile('/etc/motd');
+  if(!c)return '';
+  return c;
 }
 function readSudoers(){
-  var c=readFile('/etc/sudoers');
+  const c=readFile('/etc/sudoers');
   if(!c)return [];
-  return c.split('\n').filter(function(l){return l.trim()&&l.trim().charAt(0)!=='#';});
+  return c.split('\n').filter(l=>l.trim()&&!l.trim().startsWith('#'));
 }
 function userCanSudo(username){
-  var lines=readSudoers();
+  const lines=readSudoers();
   if(!lines.length)return false;
-  for(var i=0;i<lines.length;i++){
-    var l=lines[i];
+  for(const l of lines){
     if(new RegExp('^'+username+'\\s+ALL=').test(l))return true;
+    if(l.startsWith('root ALL')&&username==='root')return true;
   }
   return false;
 }
 function readServices(){
-  var initd=getNode('/etc/init.d');
+  const initd=getNode('/etc/init.d');
   if(!initd||initd.type!=='dir')return null;
-  var out=[];
-  for(var name in initd.children){
-    var f=initd.children[name];
+  const out=[];
+  for(const name of Object.keys(initd.children)){
+    const f=initd.children[name];
     if(f.type!=='file')continue;
-    var execM=f.content.match(/^ExecStart=(.+)$/m);
-    var critM=f.content.match(/^Critical=(\w+)$/m);
-    var descM=f.content.match(/^Description=(.+)$/m);
+    const execM=f.content.match(/^ExecStart=(.+)$/m);
+    const critM=f.content.match(/^Critical=(\w+)$/m);
+    const descM=f.content.match(/^Description=(.+)$/m);
     out.push({
-      name:name,
+      name,
       exec:execM?execM[1].trim():null,
       critical:critM&&critM[1]==='yes',
       description:descM?descM[1].trim():name
@@ -421,30 +436,41 @@ function readServices(){
   return out;
 }
 
-/* ══════════ Registry ══════════ */
-var CMDS={};
-var CATS=[['core','Shell'],['files','Files'],['text','Text'],['hash','Hash'],['archive','Archive'],['system','System'],['net','Network'],['dev','Development'],['fun','Fun'],['math','Math']];
-var BUILTINS=new Set(['cd','exit','logout','alias','unalias','export','unset','set','source','history','help','man','info','whatis','clear','echo','printf','time','which','type','pwd','whoami','id','hostname','uname','install','reboot','shell','dmesg','true']);
-var RECOVERY_ALLOW=new Set(['help','clear','install','reboot','shell','exit','ls','cat','mount','dmesg','pwd','echo','which','uname','true']);
+/* ═══════════════════════════════════════════════════════════
+   COMMAND REGISTRY
+   ═══════════════════════════════════════════════════════════ */
+const CMDS = {};
+const CATS = [['core','Shell'],['files','Files'],['text','Text'],['hash','Hash'],['archive','Archive'],['system','System'],['net','Network'],['dev','Development'],['fun','Fun'],['math','Math']];
+
+const BUILTINS = new Set([
+  'cd','exit','logout','alias','unalias','export','unset','set','source','history',
+  'help','man','info','whatis','apropos','clear','echo','printf','time','which','type',
+  'pwd','whoami','id','hostname','uname','install','reboot','shell','dmesg','true','false',
+  ':','read','test','['
+]);
+
+const RECOVERY_ALLOW = new Set([
+  'help','clear','install','reboot','shell','exit','ls','cat','mount','dmesg','pwd','echo','which','uname','true',':'
+]);
 
 function def(name,cat,desc,usage,fn){
-  CMDS[name]={name:name,cat:cat,desc:desc,usage:usage||name,fn:fn};
+  CMDS[name]={name,cat,desc,usage:usage||name,fn};
 }
 
 function permString(n){
-  var m=n.mode||(n.type==='dir'?'755':'644');
-  var s=n.type==='dir'?'d':'-';
-  var bits=[[4,'r'],[2,'w'],[1,'x']];
-  for(var g=0;g<3;g++){
-    var d=parseInt(m[g],10)||0;
-    for(var b=0;b<bits.length;b++)s+=(d&bits[b][0])?bits[b][1]:'-';
+  const m=n.mode||(n.type==='dir'?'755':'644');
+  let s=n.type==='dir'?'d':'-';
+  const bits=[[4,'r'],[2,'w'],[1,'x']];
+  for(let g=0;g<3;g++){
+    const d=parseInt(m[g],10)||0;
+    for(const[v,c]of bits)s+=(d&v)?c:'-';
   }
   return s;
 }
 function fmtDate(ts){
-  var d=new Date(ts);
-  var mon=d.toLocaleString('en-GB',{month:'short'});
-  return mon+' '+String(d.getDate()).padStart(2,' ')+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
+  const d=new Date(ts);
+  const mon=d.toLocaleString('en-GB',{month:'short'});
+  return `${mon} ${String(d.getDate()).padStart(2,' ')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
 }
 function sizeOf(n){
   if(n.type==='dir')return 4096;
@@ -459,20 +485,20 @@ function humanSize(b){
 }
 function colorName(name,n){
   if(n.type==='dir')return '\x1b[1;34m'+name+'\x1b[0m';
-  var l=name.toLowerCase();
-  if(l.charAt(0)==='.')return '\x1b[90m'+name+'\x1b[0m';
+  const l=name.toLowerCase();
+  if(l.startsWith('.'))return '\x1b[90m'+name+'\x1b[0m';
   if(l.endsWith('.md')||l.endsWith('.txt'))return '\x1b[0;37m'+name+'\x1b[0m';
   if(l.endsWith('.js')||l.endsWith('.py')||l.endsWith('.sh'))return '\x1b[0;33m'+name+'\x1b[0m';
   if(l.endsWith('.gz')||l.endsWith('.tar'))return '\x1b[0;31m'+name+'\x1b[0m';
-  if(n.mode&&n.mode.charAt(2)==='5')return '\x1b[0;32m'+name+'\x1b[0m';
+  if(n.mode&&n.mode[2]==='5')return '\x1b[0;32m'+name+'\x1b[0m';
   return name;
 }
 function readStdinOrFiles(args,ctx){
-  var files=args.filter(function(a){return a.charAt(0)!=='-';});
+  const files=args.filter(a=>!a.startsWith('-'));
   if(!files.length)return ctx.stdin||'';
-  var out='';
-  for(var i=0;i<files.length;i++){
-    var n=getNode(resolvePath(ctx.cwd,files[i]));
+  let out='';
+  for(const f of files){
+    const n=getNode(resolvePath(ctx.cwd,f));
     if(!n||n.type==='dir'||n.binary)continue;
     out+=n.content;
     if(!out.endsWith('\n'))out+='\n';
@@ -480,29 +506,27 @@ function readStdinOrFiles(args,ctx){
   return out;
 }
 function expandEnv(s){
-  return String(s).replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g,function(m,a,b){
-    var k=a||b;
-    return state.env[k]!==undefined?state.env[k]:'';
+  return String(s).replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g,(m,a,b)=>{
+    const k=a||b;return state.env[k]!==undefined?state.env[k]:'';
   });
 }
 
-/* ══════════ State ══════════ */
-var state={
-  cwd:HOME,
-  user:'user',
-  host:'localhost',
-  env:{
-    USER:'user',HOME:HOME,SHELL:'/bin/rsh',PATH:'/usr/local/bin:/usr/bin:/bin:/sbin',
-    TERM:'rendered-tty',LANG:'en_GB.UTF-8',EDITOR:'nano',
+const state = {
+  cwd: HOME,
+  user: 'user',
+  host: 'localhost',
+  env: {
+    USER:'user',HOME,SHELL:'/bin/rsh',PATH:'/usr/local/bin:/usr/bin:/bin:/sbin',
+    TERM:'rendered-tty',LANG:'en_GB.UTF-8',EDITOR:'nano',PS1:'\\u@\\h:\\w\\$ ',
     HOSTNAME:'localhost',LOGNAME:'user',PWD:HOME,OLDPWD:HOME
   },
-  aliases:{ll:'ls -l',la:'ls -la',l:'ls -la','..':'cd ..'},
-  history:[],
-  histIndex:-1,
-  mode:'boot',
-  bootLog:[],
-  inputMode:null,
-  running:true
+  aliases: {ll:'ls -l', la:'ls -la', l:'ls -la', '..':'cd ..'},
+  history: [],
+  histIndex: -1,
+  mode: 'boot',
+  bootLog: [],
+  inputMode: null,
+  running: true
 };
 
 function saveShellState(){
@@ -510,9 +534,8 @@ function saveShellState(){
 }
 function loadShellState(){
   try{
-    var raw=localStorage.getItem(K_STATE);
-    if(!raw)return;
-    var s=JSON.parse(raw);
+    const raw=localStorage.getItem(K_STATE);if(!raw)return;
+    const s=JSON.parse(raw);
     if(s&&typeof s==='object'){
       if(typeof s.cwd==='string'&&getNode(s.cwd))state.cwd=s.cwd;
       if(s.aliases&&typeof s.aliases==='object')state.aliases=s.aliases;
@@ -521,13 +544,17 @@ function loadShellState(){
   }catch(e){}
 }
 
-/* ══════════ Boot ══════════ */
+/* ═══════════════════════════════════════════════════════════
+   BOOT
+   ═══════════════════════════════════════════════════════════ */
 function logBoot(line){
-  state.bootLog.push('['+(performance.now()/1000).toFixed(6)+'] '+line);
+  state.bootLog.push(`[${(performance.now()/1000).toFixed(6).padStart(12,' ')}] ${line}`);
 }
 function writeDmesg(){
-  var dmesg=getNode('/var/log/dmesg');
-  if(dmesg&&dmesg.type==='file')dmesg.content=state.bootLog.join('\n')+'\n';
+  const dmesg=getNode('/var/log/dmesg');
+  if(dmesg&&dmesg.type==='file'){
+    dmesg.content=state.bootLog.join('\n')+'\n';
+  }
 }
 
 async function kernelPanic(reason){
@@ -540,9 +567,12 @@ async function kernelPanic(reason){
   print('  '+reason);
   print('');
   print('\x1b[90mCPU: 0 PID: 1 Comm: rinit Not tainted 6.9.2-rendered #1\x1b[0m');
+  print('\x1b[90mHardware name: Rendered Virtual Machine / RenderedGen, BIOS 2.5.0\x1b[0m');
   print('\x1b[90mCall Trace:\x1b[0m');
+  print('\x1b[90m  <TASK>\x1b[0m');
   print('\x1b[90m  panic+0x123/0x4f2\x1b[0m');
   print('\x1b[90m  rinit+0x88/0x320\x1b[0m');
+  print('\x1b[90m  <TASK>\x1b[0m');
   print('');
   print('\x1b[90m---[ end Kernel panic - not syncing: '+reason+' ]---\x1b[0m');
   print('');
@@ -578,57 +608,57 @@ async function enterRecovery(reason){
 
 async function bootSystem(){
   state.mode='boot';
-  async function show(line,delay){
+  const show=async(line,delay)=>{
     logBoot(line.replace(/\x1b\[[0-9;]*m/g,''));
     print(line);
     await sleep(delay||60);
-  }
+  };
 
   await show('\x1b[90mRenderedOS BIOS v2.5.0 — POST\x1b[0m',80);
   await show('\x1b[90mCPU : Rendered Virtual Core @ 3.60GHz (4 cores)\x1b[0m',50);
   await show('\x1b[90mMEM : 16384 MB OK\x1b[0m',50);
   await show('',20);
 
-  var vmlinuz=getNode('/boot/vmlinuz-rendered');
+  const vmlinuz=getNode('/boot/vmlinuz-rendered');
   if(!vmlinuz||vmlinuz.type!=='file'){
     await show('\x1b[37mLoading \x1b[0m\x1b[31m/boot/vmlinuz-rendered\x1b[0m\x1b[37m ... \x1b[31mFAILED\x1b[0m',0);
+    await show('',100);
     return kernelPanic('VFS: Unable to mount root fs — kernel image not found (/boot/vmlinuz-rendered)');
   }
   await show('\x1b[37mLoading \x1b[0m\x1b[36m/boot/vmlinuz-rendered\x1b[0m\x1b[37m ... ok\x1b[0m',100);
 
-  var initrd=getNode('/boot/initrd.img-rendered');
+  const initrd=getNode('/boot/initrd.img-rendered');
   if(!initrd||initrd.type!=='file'){
     await show('\x1b[37mLoading \x1b[0m\x1b[31m/boot/initrd.img-rendered\x1b[0m\x1b[37m ... \x1b[31mFAILED\x1b[0m',0);
-    return kernelPanic('VFS: initrd missing — cannot mount root');
+    return kernelPanic('VFS: initrd missing — cannot mount root (/boot/initrd.img-rendered)');
   }
   await show('\x1b[37mLoading \x1b[0m\x1b[36m/boot/initrd.img-rendered\x1b[0m\x1b[37m ... ok\x1b[0m',120);
   await show('',60);
 
-  var fstab=readFstab();
+  const fstab=readFstab();
   if(!fstab){
+    await show('\x1b[31mNo /etc/fstab — cannot determine root filesystem\x1b[0m',0);
     return kernelPanic('VFS: no /etc/fstab — cannot mount root filesystem');
   }
   if(!fstab.length){
     return kernelPanic('VFS: /etc/fstab is empty — no filesystems to mount');
   }
-  for(var i=0;i<fstab.length;i++){
-    var m=fstab[i];
-    await show('\x1b[90m[    0.'+Math.floor(Math.random()*900+100)+'] mounted '+m.device+' on '+m.mount+' type '+m.type+'\x1b[0m',50);
+  for(const m of fstab){
+    await show(`\x1b[90m[    0.${Math.floor(Math.random()*900+100)}] mounted ${m.device} on ${m.mount} type ${m.type} (${m.options})\x1b[0m`,50);
   }
-  var rootMounted=false;
-  for(var j=0;j<fstab.length;j++)if(fstab[j].mount==='/')rootMounted=true;
+  const rootMounted=fstab.some(m=>m.mount==='/');
   if(!rootMounted){
-    return kernelPanic('VFS: no root filesystem in /etc/fstab');
+    return kernelPanic('VFS: no root filesystem in /etc/fstab — system cannot continue');
   }
 
-  var passwd=readPasswd();
+  const passwd=readPasswd();
   if(!passwd||!passwd.length){
     return kernelPanic('VFS: /etc/passwd is empty or missing — no users configured');
   }
-  await show('\x1b[90m[    0.35] loaded user database ('+passwd.length+' entries)\x1b[0m',40);
+  await show(`\x1b[90m[    0.35] loaded user database (${passwd.length} entries)\x1b[0m`,40);
 
   if(!getNode('/sbin/rinit')){
-    return kernelPanic('init: /sbin/rinit not found');
+    return kernelPanic('init: /sbin/rinit not found — no init system');
   }
   await show('\x1b[90m[    0.42] init: starting /sbin/rinit as PID 1\x1b[0m',60);
 
@@ -637,39 +667,42 @@ async function bootSystem(){
   }
   await show('\x1b[90m[    0.51] init: registered shell /bin/rsh\x1b[0m',50);
 
-  var services=readServices();
+  const services=readServices();
   if(services===null){
     await show('\x1b[33m[    0.60] init: /etc/init.d not found — no services to start\x1b[0m',80);
   }else{
     await show('',40);
-    for(var s=0;s<services.length;s++){
-      var svc=services[s];
+    for(const svc of services){
       if(!svc.exec){
-        await show('\x1b[33m[  SKIP  ] '+svc.name+': no ExecStart defined\x1b[0m',50);
+        await show(`\x1b[33m[  SKIP  ] ${svc.name}: no ExecStart defined\x1b[0m`,50);
         continue;
       }
-      var exe=getNode(svc.exec);
+      const exe=getNode(svc.exec);
       if(!exe){
-        await show('\x1b[31m[ FAILED ] '+svc.name+': '+svc.exec+' not found\x1b[0m',60);
+        await show(`\x1b[31m[ FAILED ] ${svc.name}: ${svc.exec} not found\x1b[0m`,60);
         if(svc.critical){
-          return kernelPanic("init: critical service '"+svc.name+"' failed");
+          return kernelPanic(`init: critical service '${svc.name}' failed — ${svc.exec} is missing`);
         }
         continue;
       }
-      await show('\x1b[32m[  OK  ]\x1b[0m Started '+svc.description,70);
+      await show(`\x1b[32m[  OK  ]\x1b[0m Started ${svc.description}`,70);
     }
   }
 
-  if(readFile('/etc/hosts'))await show('\x1b[90m[    0.71] net: /etc/hosts loaded\x1b[0m',30);
-  if(readFile('/etc/resolv.conf'))await show('\x1b[90m[    0.75] net: /etc/resolv.conf loaded\x1b[0m',30);
+  if(readFile('/etc/hosts')){
+    await show('\x1b[90m[    0.71] net: /etc/hosts loaded\x1b[0m',30);
+  }
+  if(readFile('/etc/resolv.conf')){
+    await show('\x1b[90m[    0.75] net: /etc/resolv.conf loaded\x1b[0m',30);
+  }
 
-  var hn=readHostname();
+  const hn=readHostname();
   if(hn){
     state.host=hn;
     state.env.HOSTNAME=hn;
-    await show('\x1b[90m[    0.82] set hostname to \''+hn+'\'\x1b[0m',40);
+    await show(`\x1b[90m[    0.82] set hostname to '${hn}'\x1b[0m`,40);
   }else{
-    await show('\x1b[33m[    0.82] /etc/hostname missing\x1b[0m',40);
+    await show('\x1b[33m[    0.82] /etc/hostname missing — using "localhost"\x1b[0m',40);
     state.host='localhost';
   }
 
@@ -683,12 +716,12 @@ async function bootSystem(){
   clearScreen();
   state.mode='running';
 
-  var osrel=readOsRelease();
-  print('\x1b[1;36m'+(osrel?osrel.PRETTY_NAME:'RenderedOS')+' \x1b[0m\x1b[90m—\x1b[0m \x1b[37m'+state.host+' tty1\x1b[0m');
+  const osrel=readOsRelease();
+  print(`\x1b[1;36m${osrel?osrel.PRETTY_NAME:'RenderedOS'} \x1b[0m\x1b[90m—\x1b[0m \x1b[37m${state.host} tty1\x1b[0m`);
   print('');
-  print(readMOTD());
+  print(readMOTD()||'');
   print('');
-  print('\x1b[90mLast login: '+new Date().toDateString()+' '+new Date().toTimeString().slice(0,5)+' on tty1\x1b[0m');
+  print(`\x1b[90mLast login: ${new Date().toDateString()} ${new Date().toTimeString().slice(0,5)} on tty1\x1b[0m`);
   print('');
   print('Type \x1b[1;33mhelp\x1b[0m for commands. Try \x1b[1;33mls /boot\x1b[0m, \x1b[1;33mcat /etc/fstab\x1b[0m, \x1b[1;33msha256sum /etc/passwd\x1b[0m.');
   print('');
@@ -697,10 +730,12 @@ async function bootSystem(){
   inputEl.focus();
 }
 
-/* ══════════ Core commands ══════════ */
+/* ═══════════════════════════════════════════════════════════
+   COMMANDS — CORE
+   ═══════════════════════════════════════════════════════════ */
 function manPage(c){
   return [
-    '\x1b[1;36m'+c.name.toUpperCase()+'(1)\x1b[0m'+' '.repeat(Math.max(1,30-c.name.length))+'\x1b[90mRenderedOS Manual\x1b[0m',
+    `\x1b[1;36m${c.name.toUpperCase()}(1)\x1b[0m`+' '.repeat(Math.max(1,30-c.name.length))+'\x1b[90mRenderedOS Manual\x1b[0m',
     '',
     '\x1b[1mNAME\x1b[0m',
     '       '+c.name+' — '+c.desc,
@@ -709,798 +744,716 @@ function manPage(c){
     '       '+c.usage,
     '',
     '\x1b[1mCATEGORY\x1b[0m',
-    '       '+(CATS.find(function(x){return x[0]===c.cat;})||['','misc'])[1]
+    '       '+(CATS.find(x=>x[0]===c.cat)||['','misc'])[1],
+    '',
+    '\x1b[1mSEE ALSO\x1b[0m',
+    '       help(1), man(1)'
   ].join('\n');
 }
 
-def('help','core','show this help','help [command]',function(args){
+def('help','core','show this help','help [command]',(args)=>{
   if(args[0]==='me')return "\x1b[1;36mI thought you'd never ask.\x1b[0m\n\nEverything is real. Read \x1b[33mcat /etc/fstab\x1b[0m, then \x1b[33mrm /boot/vmlinuz-rendered\x1b[0m, then \x1b[33mreboot\x1b[0m.";
-  if(args[0]){var c=CMDS[args[0]];if(!c)return '\x1b[31mhelp: no such command: '+args[0]+'\x1b[0m';return manPage(c);}
-  var out='\x1b[1;36mRenderedOS shell\x1b[0m \x1b[90m— available commands\x1b[0m\n';
-  for(var ci=0;ci<CATS.length;ci++){
-    var key=CATS[ci][0],label=CATS[ci][1];
-    var names=Object.keys(CMDS).filter(function(n){return CMDS[n].cat===key;}).sort();
+  if(args[0]){const c=CMDS[args[0]];if(!c)return `\x1b[31mhelp: no such command: ${args[0]}\x1b[0m`;return manPage(c);}
+  let out='\x1b[1;36mRenderedOS shell\x1b[0m \x1b[90m— available commands\x1b[0m\n';
+  for(const[key,label]of CATS){
+    const names=Object.values(CMDS).filter(c=>c.cat===key).map(c=>c.name).sort();
     if(!names.length)continue;
-    out+='\n\x1b[1;33m'+label.toUpperCase()+'\x1b[0m\n';
-    var line='  ';
-    for(var ni=0;ni<names.length;ni++){
-      var n=names[ni];
-      var isB=BUILTINS.has(n);
-      var hasBin=!!getNode('/bin/'+n);
-      var marker=isB?'\x1b[36m•\x1b[0m':hasBin?'\x1b[32m•\x1b[0m':'\x1b[31m•\x1b[0m';
+    out+='\n\x1b[1;33m'+label.toUpperCase()+'\x1b[0m\n  ';
+    let line='  ';
+    for(const n of names){
+      const isBuiltin=BUILTINS.has(n);
+      const hasBin=!!getNode('/bin/'+n);
+      const marker=isBuiltin?'\x1b[36m•\x1b[0m':hasBin?'\x1b[32m•\x1b[0m':'\x1b[31m•\x1b[0m';
       if((line+n).length>72){out+=line+'\n';line='  ';}
       line+=marker+n+'  ';
     }
     if(line.trim())out+=line+'\n';
   }
-  out+='\n\x1b[90m• builtin   • binary present   • binary missing\x1b[0m';
+  out+='\n\x1b[90m• shell builtin  • binary present  • binary missing (command disabled)\x1b[0m';
   return out;
 });
-def('man','core','display manual page','man <command>',function(args){
+def('man','core','display manual page','man <command>',(args)=>{
   if(!args[0])return '\x1b[33mWhat manual page do you want?\x1b[0m';
-  var c=CMDS[args[0]];
-  if(!c)return '\x1b[31mNo manual entry for '+args[0]+'\x1b[0m';
+  const c=CMDS[args[0]];
+  if(!c)return `\x1b[31mNo manual entry for ${args[0]}\x1b[0m`;
   return manPage(c);
 });
-def('clear','core','clear screen','clear',function(){clearScreen();return '';});
-def('exit','core','exit shell','exit',function(){
-  if(state.mode==='recovery'){print('\x1b[90mThe recovery shell cannot be exited.\x1b[0m');return '';}
+def('info','core','read info documentation','info <command>',(args)=>{const c=CMDS[args[0]||''];return c?manPage(c):`info: no entry`;});
+def('whatis','core','one-line manual descriptions','whatis <command>',(args)=>{const c=CMDS[args[0]||''];return c?`${c.name} (1) — ${c.desc}`:`${args[0]}: nothing appropriate.`;});
+def('clear','core','clear the screen','clear',()=>{clearScreen();return '';});
+def('exit','core','exit the shell','exit [code]',()=>{
+  if(state.mode==='recovery'){
+    print('\x1b[90mThe recovery shell cannot be exited. Use `install` or `reboot`.\x1b[0m');
+    return '';
+  }
   print('\x1b[90mlogout\x1b[0m');
   inputLine.style.display='none';
   state.running=false;
   return '';
 });
-def('logout','core','exit shell','logout',function(){return CMDS.exit.fn([],{});});
-def('history','core','command history','history [-c]',function(args){
+def('logout','core','exit the shell','logout',()=>CMDS.exit.fn([],{}));
+def('history','core','show command history','history [-c]',(args)=>{
   if(args[0]==='-c'){state.history=[];saveShellState();return '';}
-  return state.history.map(function(h,i){return String(i+1).padStart(5)+'  '+h;}).join('\n')||'';
+  return state.history.map((h,i)=>String(i+1).padStart(5)+'  '+h).join('\n')||'';
 });
-def('alias','core','define aliases','alias [name=value]',function(args){
-  if(!args.length)return Object.keys(state.aliases).map(function(k){return "alias "+k+"='"+state.aliases[k]+"'";}).join('\n');
-  var out=[];
-  for(var i=0;i<args.length;i++){
-    var a=args[i];
-    var idx=a.indexOf('=');
-    if(idx<0){out.push("alias "+a+"='"+（state.aliases[a]||'')+"'");continue;}
-    state.aliases[a.slice(0,idx)]=a.slice(idx+1).replace(/^['"]|['"]$/g,'');
+def('alias','core','define or display aliases','alias [name=value]',(args)=>{
+  if(!args.length)return Object.entries(state.aliases).map(([k,v])=>`alias ${k}='${v}'`).join('\n');
+  const out=[];
+  for(const a of args){
+    const i=a.indexOf('=');
+    if(i<0){out.push(`alias ${a}='${state.aliases[a]||''}'`);continue;}
+    state.aliases[a.slice(0,i)]=a.slice(i+1).replace(/^['"]|['"]$/g,'');
   }
   saveShellState();
   return out.join('\n');
 });
-def('unalias','core','remove aliases','unalias <name>',function(args){for(var i=0;i<args.length;i++)delete state.aliases[args[i]];saveShellState();return '';});
-def('echo','core','echo text','echo [-n] [args]',function(args){
-  var nl=true;
+def('unalias','core','remove aliases','unalias <name>',(args)=>{for(const a of args)delete state.aliases[a];saveShellState();return '';});
+def('echo','core','display a line of text','echo [-n] [args...]',(args)=>{
+  let nl=true;
   if(args[0]==='-n'){nl=false;args=args.slice(1);}
   return expandEnv(args.join(' '))+(nl?'':'');
 });
-def('printf','core','format print','printf <fmt> [args]',function(args){
+def('printf','core','format and print data','printf <fmt> [args...]',(args)=>{
   if(!args.length)return '';
-  var fmt=args[0].replace(/\\n/g,'\n').replace(/\\t/g,'\t');
-  var i=1;
-  fmt=fmt.replace(/%s/g,function(){return args[i++]||'';});
+  let fmt=args[0].replace(/\\n/g,'\n').replace(/\\t/g,'\t');
+  let i=1;
+  fmt=fmt.replace(/%s/g,()=>args[i++]||'');
   return expandEnv(fmt);
 });
-def('env','core','environment','env',function(){return Object.keys(state.env).map(function(k){return k+'='+state.env[k];}).join('\n');});
-def('export','core','set env','export NAME=value',function(args){for(var i=0;i<args.length;i++){var a=args[i];var idx=a.indexOf('=');if(idx>0)state.env[a.slice(0,idx)]=a.slice(idx+1);}return '';});
-def('unset','core','unset env','unset NAME',function(args){for(var i=0;i<args.length;i++)delete state.env[args[i]];return '';});
-def('set','core','shell vars','set',function(){return Object.keys(state.env).map(function(k){return k+"='"+state.env[k]+"'";}).join('\n');});
-def('source','core','execute from file','source <file>',async function(args,ctx){
+def('env','core','print environment','env',()=>Object.entries(state.env).map(([k,v])=>`${k}=${v}`).join('\n'));
+def('export','core','set env var','export NAME=value',(args)=>{for(const a of args){const i=a.indexOf('=');if(i>0)state.env[a.slice(0,i)]=a.slice(i+1);}return '';});
+def('unset','core','remove env var','unset NAME',(args)=>{for(const a of args)delete state.env[a];return '';});
+def('set','core','show shell variables','set',()=>Object.entries(state.env).map(([k,v])=>`${k}='${v}'`).join('\n'));
+def('source','core','execute commands from a file','source <file>',async(args,ctx)=>{
   if(!args[0])return 'source: missing filename';
-  var n=getNode(resolvePath(ctx.cwd,args[0]));
-  if(!n||n.type!=='file')return 'source: '+args[0]+': No such file';
-  var lines=n.content.split('\n');
-  for(var i=0;i<lines.length;i++){
-    var t=lines[i].trim();
-    if(!t||t.charAt(0)==='#')continue;
+  const n=getNode(resolvePath(ctx.cwd,args[0]));
+  if(!n||n.type!=='file')return `source: ${args[0]}: No such file`;
+  for(const line of n.content.split('\n')){
+    const t=line.trim();
+    if(!t||t.startsWith('#'))continue;
     await execLine(t);
   }
   return '';
 });
-def('which','core','locate command','which <cmd>',function(args){
+def('which','core','locate a command','which <cmd>',(args)=>{
   if(!args[0])return 'which: missing argument';
-  return args.map(function(a){
-    if(BUILTINS.has(a))return a+': shell built-in';
-    var paths=['/bin/','/usr/bin/','/sbin/','/usr/sbin/'];
-    for(var i=0;i<paths.length;i++)if(getNode(paths[i]+a))return paths[i]+a;
-    return 'which: no '+a+' in ('+state.env.PATH+')';
+  return args.map(a=>{
+    if(BUILTINS.has(a))return `${a}: shell built-in`;
+    for(const p of ['/bin/','/usr/bin/','/sbin/','/usr/sbin/']){
+      if(getNode(p+a))return p+a;
+    }
+    return `which: no ${a} in (${state.env.PATH})`;
   }).join('\n');
 });
-def('type','core','command type','type <cmd>',function(args){
+def('type','core','identify command type','type <cmd>',(args)=>{
   if(!args[0])return 'type: missing argument';
-  return args.map(function(a){
-    if(state.aliases[a])return a+" is aliased to `"+state.aliases[a]+"'";
-    if(BUILTINS.has(a))return a+' is a shell builtin';
-    var paths=['/bin/','/usr/bin/','/sbin/','/usr/sbin/'];
-    for(var i=0;i<paths.length;i++)if(getNode(paths[i]+a))return a+' is '+paths[i]+a;
-    return 'type: '+a+': not found';
+  return args.map(a=>{
+    if(state.aliases[a])return `${a} is aliased to \`${state.aliases[a]}'`;
+    if(BUILTINS.has(a))return `${a} is a shell builtin`;
+    for(const p of ['/bin/','/usr/bin/','/sbin/','/usr/sbin/']){
+      if(getNode(p+a))return `${a} is ${p+a}`;
+    }
+    return `type: ${a}: not found`;
   }).join('\n');
 });
-def('pwd','core','working directory','pwd',function(a,c){return c.cwd;});
-def('cd','core','change directory','cd [dir]',function(args,ctx){
-  var target=args[0]||state.env.HOME||HOME;
-  var full=resolvePath(ctx.cwd,target);
-  var n=getNode(full);
-  if(!n)return 'cd: '+target+': No such file or directory';
-  if(n.type!=='dir')return 'cd: '+target+': Not a directory';
+def('pwd','core','print working directory','pwd',(a,c)=>c.cwd);
+def('cd','core','change directory','cd [dir]',(args,ctx)=>{
+  const target=args[0]||state.env.HOME||HOME;
+  const full=resolvePath(ctx.cwd,target);
+  const n=getNode(full);
+  if(!n)return `cd: ${target}: No such file or directory`;
+  if(n.type!=='dir')return `cd: ${target}: Not a directory`;
   state.env.OLDPWD=state.cwd;
   state.cwd=full;
   state.env.PWD=full;
   saveShellState();
   return '';
 });
-def('whoami','core','current user','whoami',function(){return state.user;});
-def('id','core','user info','id',function(){
-  var users=readPasswd()||[];
-  var u=null;
-  for(var i=0;i<users.length;i++)if(users[i].name===state.user){u=users[i];break;}
+def('whoami','core','print current user','whoami',()=>state.user);
+def('id','core','print user info','id',()=>{
+  const users=readPasswd()||[];
+  const u=users.find(x=>x.name===state.user);
   if(!u)return '\x1b[31mid: cannot find name for user ID\x1b[0m';
-  return 'uid='+u.uid+'('+u.name+') gid='+u.gid+'('+u.name+') groups='+u.gid+'('+u.name+'),27(sudo)';
+  return `uid=${u.uid}(${u.name}) gid=${u.gid}(${u.name}) groups=${u.gid}(${u.name}),27(sudo)`;
 });
-def('hostname','core','hostname','hostname',function(){return readHostname()||state.host;});
-def('uname','core','system info','uname [-a]',function(args){
-  var osrel=readOsRelease();
-  var name=osrel?osrel.NAME:'RenderedOS';
-  var host=readHostname()||state.host;
-  if(args.indexOf('-a')>=0)return name+' '+host+' 6.9.2-rendered #1 SMP RenderedGen x86_64 GNU/Browser';
-  if(args.indexOf('-r')>=0)return '6.9.2-rendered';
-  if(args.indexOf('-n')>=0)return host;
-  if(args.indexOf('-m')>=0)return 'x86_64';
+def('hostname','core','show hostname','hostname',()=>readHostname()||state.host);
+def('uname','core','print system info','uname [-a]',(args)=>{
+  const osrel=readOsRelease();
+  const name=osrel?osrel.NAME:'RenderedOS';
+  const rel='6.9.2-rendered';
+  const host=readHostname()||state.host;
+  if(args.includes('-a'))return `${name} ${host} ${rel} #1 SMP RenderedGen x86_64 GNU/Browser`;
+  if(args.includes('-r'))return rel;
+  if(args.includes('-n'))return host;
+  if(args.includes('-m'))return 'x86_64';
   return name;
 });
-def('sleep','core','delay','sleep <sec>',async function(args){
-  var n=parseFloat(args[0]||'1');
+def('sleep','core','delay execution','sleep <sec>',async(args)=>{
+  const n=parseFloat(args[0]||'1');
   if(isNaN(n))return 'sleep: invalid time interval';
   await sleep(clamp(n,0,30)*1000);
   return '';
 });
-def('seq','core','sequence','seq [a] [b] c',function(args){
-  var nums=args.map(Number);
-  var start=1,inc=1,end;
+def('seq','core','print a sequence','seq [a] [b] c',(args)=>{
+  const nums=args.map(Number);
+  let start=1,inc=1,end;
   if(nums.length===1)end=nums[0];
   else if(nums.length===2){start=nums[0];end=nums[1];}
   else if(nums.length>=3){start=nums[0];inc=nums[1];end=nums[2];}
   else return 'seq: missing operand';
   if(inc===0)return 'seq: invalid increment';
-  var out=[];
-  for(var i=start;inc>0?i<=end:i>=end;i+=inc){out.push(String(i));if(out.length>5000)break;}
+  const out=[];
+  for(let i=start;inc>0?i<=end:i>=end;i+=inc){out.push(String(i));if(out.length>5000)break;}
   return out.join('\n');
 });
-def('yes','core','repeat string','yes [str]',function(args){
-  var s=args.join(' ')||'y';
-  var out=[];
-  for(var i=0;i<200;i++)out.push(s);
+def('yes','core','repeat a string','yes [str]',(args)=>{
+  const s=args.join(' ')||'y';
+  const out=[];
+  for(let i=0;i<200;i++)out.push(s);
   out.push('\x1b[90m[truncated]\x1b[0m');
   return out.join('\n');
 });
-def('date','core','date','date [+fmt]',function(args){
-  var d=new Date();
-  if(args[0]&&args[0].charAt(0)==='+'){
-    return args[0].slice(1)
-      .replace(/%Y/g,d.getFullYear())
-      .replace(/%m/g,String(d.getMonth()+1).padStart(2,'0'))
-      .replace(/%d/g,String(d.getDate()).padStart(2,'0'))
-      .replace(/%H/g,String(d.getHours()).padStart(2,'0'))
-      .replace(/%M/g,String(d.getMinutes()).padStart(2,'0'))
-      .replace(/%S/g,String(d.getSeconds()).padStart(2,'0'));
-  }
+def('date','core','print date','date [+fmt]',(args)=>{
+  const d=new Date();
+  if(args[0]&&args[0].startsWith('+'))return args[0].slice(1)
+    .replace(/%Y/g,d.getFullYear()).replace(/%m/g,String(d.getMonth()+1).padStart(2,'0'))
+    .replace(/%d/g,String(d.getDate()).padStart(2,'0')).replace(/%H/g,String(d.getHours()).padStart(2,'0'))
+    .replace(/%M/g,String(d.getMinutes()).padStart(2,'0')).replace(/%S/g,String(d.getSeconds()).padStart(2,'0'))
+    .replace(/%Z/g,Intl.DateTimeFormat().resolvedOptions().timeZone);
   return d.toString();
 });
-def('uptime','core','uptime','uptime',function(){
-  var s=Math.floor(performance.now()/1000);
-  var h=Math.floor(s/3600),m=Math.floor((s%3600)/60);
-  return ' '+new Date().toTimeString().slice(0,5)+' up '+h+':'+String(m).padStart(2,'0')+',  1 user';
+def('uptime','core','show uptime','uptime',()=>{
+  const s=Math.floor(performance.now()/1000);
+  const h=Math.floor(s/3600),m=Math.floor((s%3600)/60);
+  return ` ${new Date().toTimeString().slice(0,5)} up ${h}:${String(m).padStart(2,'0')},  1 user,  load average: 0.08, 0.12, 0.09`;
 });
-def('sudo','core','execute as root','sudo <cmd>',async function(args,ctx){
+def('sudo','core','execute as root','sudo <cmd>',async(args,ctx)=>{
   if(!args.length)return 'usage: sudo <command>';
-  if(!userCanSudo(state.user))return '\x1b[31m'+state.user+' is not in the sudoers file.\x1b[0m';
-  if(args[0]==='make'&&args[1]==='me'&&args[2]==='a'&&args[3]==='sandwich')return '\x1b[32mOkay. 🥪\x1b[0m';
+  if(!userCanSudo(state.user))return `\x1b[31m${state.user} is not in the sudoers file. This incident will be reported.\x1b[0m`;
+  if(args[0]==='su'||args[0]==='-i'||args[0]==='-s')return '\x1b[90m[sudo] password for user: \x1b[0m\n\x1b[31mSorry, try again.\x1b[0m';
+  if(args[0]==='make'&&args[1]==='me'&&args[2]==='a'&&args[3]==='sandwich')return '\x1b[32mOkay. 🥪\x1b[0m\n\x1b[90m(it is a good sandwich.)\x1b[0m';
   if(args[0]==='make'&&args[1]==='me'&&args[2]==='a')return '\x1b[33msudo: try `sudo make me a sandwich`\x1b[0m';
   return await captureOutput(args.join(' '),{sudo:true});
 });
-def('install','core','reinstall base system','install',async function(){
+def('su','core','switch user','su [user]',()=>`\x1b[31msu: Authentication failure\x1b[0m`);
+def('install','core','install or restore the base system','install',async()=>{
   clearStorage();
   FS=defaultFS();
   ensureBins();
   saveFS();
   print('\x1b[32mBase system installed.\x1b[0m');
   print('');
+  print('Filesystem restored from pristine template.');
   print('Run \x1b[33mreboot\x1b[0m to start the new system.');
   return '';
 });
-def('reboot','core','restart system','reboot',function(){
+def('reboot','core','restart the system','reboot [-r]',(args)=>{
+  if(args[0]==='-r'){return CMDS.install.fn([],{});}
   print('\x1b[33mThe system is going down for reboot NOW!\x1b[0m');
   inputLine.style.display='none';
   state.running=false;
-  setTimeout(function(){location.reload();},1000);
+  setTimeout(()=>location.reload(),1000);
   return '';
 });
-def('poweroff','core','power off','poweroff',function(){
+def('poweroff','core','power off','poweroff',()=>{
   print('\x1b[33mThe system is going down for power-off NOW!\x1b[0m');
   inputLine.style.display='none';
   state.running=false;
+  setTimeout(()=>{clearScreen();print('\x1b[90mSystem halted.\x1b[0m');},800);
   return '';
 });
-def('shutdown','core','power off','shutdown',function(){return CMDS.poweroff.fn([],{});});
-def('shell','core','minimal shell','shell',function(){return '';});
-def('dmesg','core','kernel log','dmesg',function(){
-  var log=readFile('/var/log/dmesg')||state.bootLog.join('\n');
+def('shutdown','core','power off','shutdown [now]',()=>CMDS.poweroff.fn([],{}));
+def('shell','core','start a minimal shell','shell',()=>{
+  if(state.mode==='recovery')return '\x1b[90mYou are already in a shell.\x1b[0m';
+  return '';
+});
+def('dmesg','core','print the kernel ring buffer','dmesg',()=>{
+  const log=readFile('/var/log/dmesg')||state.bootLog.join('\n');
   return log||'(no boot log)';
 });
-def('true','core','do nothing','true',function(){return '';});
+/* tiny stubs so BUILTINS entries that had no impl don't error */
+def(':','core','no-op',':',()=> '');
+def('true','core','do nothing, successfully','true',()=> '');
+def('false','core','do nothing, unsuccessfully','false',()=> '');
+def('read','core','read a line (no-op)','read [var]',()=> '');
+def('test','core','evaluate expression','test <expr>',()=> '');
+def('[','core','evaluate expression','[ <expr> ]',()=> '');
 
-/* ══════════ Files ══════════ */
-def('ls','files','list directory','ls [-lah] [path]',function(args,ctx){
-  var all=false,long=false,human=false;
-  var paths=[];
-  for(var i=0;i<args.length;i++){
-    var a=args[i];
-    if(a.charAt(0)==='-'&&a.length>1){
-      for(var j=1;j<a.length;j++){
-        if(a[j]==='a')all=true;
-        else if(a[j]==='l')long=true;
-        else if(a[j]==='h')human=true;
-      }
-    }else paths.push(a);
+/* ═══════════════════════════════════════════════════════════
+   FILES
+   ═══════════════════════════════════════════════════════════ */
+def('ls','files','list directory contents','ls [-lah] [path]',(args,ctx)=>{
+  let all=false,long=false,human=false;
+  const paths=[];
+  for(const a of args){
+    if(a.startsWith('-')&&a.length>1){for(const c of a.slice(1)){if(c==='a')all=true;else if(c==='l')long=true;else if(c==='h')human=true;}}
+    else paths.push(a);
   }
   if(!paths.length)paths.push('.');
   function render(path,label){
-    var n=getNode(path);
-    if(!n)return "ls: cannot access '"+label+"': No such file or directory";
-    if(n.type==='file'){
-      if(long)return permString(n)+' 1 '+pad(n.owner,6)+' '+pad(n.group,6)+' '+String(human?humanSize(sizeOf(n)):sizeOf(n)).padStart(6)+' '+fmtDate(n.mtime)+' '+colorName(label,n);
-      return colorName(label,n);
-    }
-    var names=Object.keys(n.children).sort();
-    if(!all)names=names.filter(function(x){return x.charAt(0)!=='.';});
-    var out='';
+    const n=getNode(path);
+    if(!n)return `ls: cannot access '${label}': No such file or directory`;
+    if(n.type==='file')return long?`${permString(n)} 1 ${pad(n.owner,6)} ${pad(n.group,6)} ${String(human?humanSize(sizeOf(n)):sizeOf(n)).padStart(6)} ${fmtDate(n.mtime)} ${colorName(label,n)}`:colorName(label,n);
+    let names=Object.keys(n.children).sort();
+    if(!all)names=names.filter(x=>!x.startsWith('.'));
+    let out='';
     if(long){
-      var total=0;
-      for(var k=0;k<names.length;k++)total+=Math.ceil(sizeOf(n.children[names[k]])/1024);
-      out+='total '+total+'\n';
-      out+=names.map(function(x){
-        var c=n.children[x];
-        return permString(c)+' 1 '+pad(c.owner,6)+' '+pad(c.group,6)+' '+String(human?humanSize(sizeOf(c)):sizeOf(c)).padStart(6)+' '+fmtDate(c.mtime)+' '+colorName(x,c);
+      out+=`total ${names.reduce((s,x)=>s+Math.ceil(sizeOf(n.children[x])/1024),0)}\n`;
+      out+=names.map(x=>{
+        const c=n.children[x];
+        return `${permString(c)} 1 ${pad(c.owner,6)} ${pad(c.group,6)} ${String(human?humanSize(sizeOf(c)):sizeOf(c)).padStart(6)} ${fmtDate(c.mtime)} ${colorName(x,c)}`;
       }).join('\n');
     }else if(names.length){
-      var line='';
-      for(var q=0;q<names.length;q++){
-        var col=colorName(names[q],n.children[names[q]]);
-        var plain=names[q]+(n.children[names[q]].type==='dir'?'/':'');
+      let line='';
+      for(const x of names){
+        const col=colorName(x,n.children[x]);
+        const plain=x+(n.children[x].type==='dir'?'/':'');
         if(line.replace(/\x1b\[[0-9;]*m/g,'').length+plain.length+2>78){out+=line+'\n';line='';}
-        line+=col+(n.children[names[q]].type==='dir'?'/':'')+'  ';
+        line+=col+(n.children[x].type==='dir'?'/':'')+'  ';
       }
       out+=line.replace(/\s+$/,'');
     }
     return out;
   }
-  return paths.map(function(p){return render(resolvePath(ctx.cwd,p),p);}).join('\n\n');
+  return paths.map(p=>render(resolvePath(ctx.cwd,p),p)).join('\n\n');
 });
-def('cat','files','concatenate files','cat [-n] [file...]',function(args,ctx){
-  var n=false;
-  var files=[];
-  for(var i=0;i<args.length;i++){
-    if(args[i]==='-n')n=true;
-    else files.push(args[i]);
-  }
+def('cat','files','concatenate files','cat [-n] [file...]',(args,ctx)=>{
+  let n=false;const files=[];
+  for(const a of args){if(a==='-n')n=true;else files.push(a);}
   if(!files.length)return ctx.stdin||'';
-  var out='';
-  for(var f=0;f<files.length;f++){
-    var path=resolvePath(ctx.cwd,files[f]);
+  let out='';
+  for(const f of files){
+    const path=resolvePath(ctx.cwd,f);
     if(path==='/dev/null')continue;
-    if(path==='/dev/zero')return '\x1b[90m(infinite zeros)\x1b[0m';
-    if(path==='/dev/random')return '\x1b[90m'+Array.from({length:8},function(){return Math.random().toString(36).slice(2,12);}).join('\n')+'\x1b[0m';
-    var node=getNode(path);
-    if(!node){out+='cat: '+files[f]+': No such file or directory\n';continue;}
-    if(node.type==='dir'){out+='cat: '+files[f]+': Is a directory\n';continue;}
-    if(node.binary){out+='cat: '+files[f]+': binary file\n';continue;}
+    if(path==='/dev/zero')return '\x1b[90m(infinite zeros — you stop reading)\x1b[0m';
+    if(path==='/dev/random')return '\x1b[90m'+Array.from({length:8},()=>Math.random().toString(36).slice(2,12)).join('\n')+'\x1b[0m';
+    const node=getNode(path);
+    if(!node){out+=`cat: ${f}: No such file or directory\n`;continue;}
+    if(node.type==='dir'){out+=`cat: ${f}: Is a directory\n`;continue;}
+    if(node.binary){out+=`cat: ${f}: binary file\n`;continue;}
     out+=node.content;
     if(!out.endsWith('\n'))out+='\n';
   }
-  if(n){
-    var i2=1;
-    out=out.replace(/\n$/,'').split('\n').map(function(l){return String(i2++).padStart(6)+'\t'+l;}).join('\n');
-  }
+  if(n){let i=1;out=out.replace(/\n$/,'').split('\n').map(l=>String(i++).padStart(6)+'\t'+l).join('\n');}
   return out;
 });
-def('tac','files','reverse cat','tac [file]',function(args,ctx){return readStdinOrFiles(args,ctx).replace(/\n$/,'').split('\n').reverse().join('\n');});
-def('head','files','first lines','head [-n N] [file]',function(args,ctx){
-  var n=10;
-  var files=[];
-  for(var i=0;i<args.length;i++){
+def('tac','files','reverse cat','tac [file...]',(args,ctx)=>readStdinOrFiles(args,ctx).replace(/\n$/,'').split('\n').reverse().join('\n'));
+def('head','files','first lines','head [-n N] [file]',(args,ctx)=>{
+  let n=10;const files=[];
+  for(let i=0;i<args.length;i++){
     if(args[i]==='-n')n=parseInt(args[++i],10)||10;
     else if(/^-\d+$/.test(args[i]))n=parseInt(args[i].slice(1),10);
     else files.push(args[i]);
   }
-  var src=files.length?readStdinOrFiles(files,ctx):(ctx.stdin||'');
+  const src=files.length?readStdinOrFiles(files,ctx):(ctx.stdin||'');
   return src.replace(/\n$/,'').split('\n').slice(0,n).join('\n');
 });
-def('tail','files','last lines','tail [-n N] [file]',function(args,ctx){
-  var n=10;
-  var files=[];
-  for(var i=0;i<args.length;i++){
+def('tail','files','last lines','tail [-n N] [file]',(args,ctx)=>{
+  let n=10;const files=[];
+  for(let i=0;i<args.length;i++){
     if(args[i]==='-n')n=parseInt(args[++i],10)||10;
     else if(/^-\d+$/.test(args[i]))n=parseInt(args[i].slice(1),10);
     else files.push(args[i]);
   }
-  var src=files.length?readStdinOrFiles(files,ctx):(ctx.stdin||'');
-  var lines=src.replace(/\n$/,'').split('\n');
+  const src=files.length?readStdinOrFiles(files,ctx):(ctx.stdin||'');
+  const lines=src.replace(/\n$/,'').split('\n');
   return lines.slice(Math.max(0,lines.length-n)).join('\n');
 });
-def('wc','files','word count','wc [-lwc] [file]',function(args,ctx){
-  var l=false,w=false,c=false;
-  var files=[];
-  for(var i=0;i<args.length;i++){
-    var a=args[i];
-    if(a==='-l')l=true;
-    else if(a==='-w')w=true;
-    else if(a==='-c')c=true;
-    else if(a.charAt(0)==='-'){
-      for(var j=1;j<a.length;j++){
-        if(a[j]==='l')l=true;
-        else if(a[j]==='w')w=true;
-        else if(a[j]==='c')c=true;
-      }
-    }else files.push(a);
+def('wc','files','word/line/byte counts','wc [-lwc] [file]',(args,ctx)=>{
+  let l=false,w=false,c=false;
+  const files=[];
+  for(const a of args){
+    if(a==='-l')l=true;else if(a==='-w')w=true;else if(a==='-c')c=true;
+    else if(a.startsWith('-')){for(const ch of a.slice(1)){if(ch==='l')l=true;else if(ch==='w')w=true;else if(ch==='c')c=true;}}
+    else files.push(a);
   }
   if(!l&&!w&&!c)l=w=c=true;
-  var targets=files.length?files:[null];
-  var out=[];
-  for(var t=0;t<targets.length;t++){
-    var src=targets[t]===null?(ctx.stdin||''):readStdinOrFiles([targets[t]],ctx);
-    var lines=src===''?0:src.replace(/\n$/,'').split('\n').length;
-    var words=src.split(/\s+/).filter(Boolean).length;
-    var bytes=new TextEncoder().encode(src).length;
-    var parts=[];
+  const targets=files.length?files:[null];
+  const out=[];
+  for(const f of targets){
+    const src=f===null?(ctx.stdin||''):readStdinOrFiles([f],ctx);
+    const lines=src===''?0:src.replace(/\n$/,'').split('\n').length;
+    const words=src.split(/\s+/).filter(Boolean).length;
+    const bytes=new TextEncoder().encode(src).length;
+    const parts=[];
     if(l)parts.push(String(lines).padStart(7));
     if(w)parts.push(String(words).padStart(7));
     if(c)parts.push(String(bytes).padStart(7));
-    out.push(parts.join('')+(targets[t]?' '+targets[t]:''));
+    out.push(parts.join('')+(f?' '+f:''));
   }
   return out.join('\n');
 });
-def('touch','files','create empty file','touch <file...>',function(args,ctx){
+def('touch','files','create empty file','touch <file...>',(args,ctx)=>{
   if(!args.length)return 'touch: missing file operand';
-  for(var i=0;i<args.length;i++){
-    var p=resolvePath(ctx.cwd,args[i]);
-    var n=getNode(p);
+  for(const f of args){
+    const p=resolvePath(ctx.cwd,f);
+    const n=getNode(p);
     if(n){n.mtime=Date.now();continue;}
-    var gp=getParent(p);
-    if(!gp.parent)return 'touch: cannot touch '+args[i]+': No such file or directory';
+    const {parent}=getParent(p);
+    if(!parent)return `touch: cannot touch '${f}': No such file or directory`;
     writeFile(p,'');
   }
   saveFS();
   return '';
 });
-def('mkdir','files','make directory','mkdir [-p] <dir...>',function(args,ctx){
-  var p=false;
-  var dirs=[];
-  for(var i=0;i<args.length;i++){
-    if(args[i]==='-p')p=true;
-    else dirs.push(args[i]);
-  }
+def('mkdir','files','make directories','mkdir [-p] <dir...>',(args,ctx)=>{
+  const p=args[0]==='-p';
+  const dirs=args.filter(a=>a!=='-p');
   if(!dirs.length)return 'mkdir: missing operand';
-  for(var d=0;d<dirs.length;d++){
-    var full=resolvePath(ctx.cwd,dirs[d]);
-    if(getNode(full))return 'mkdir: cannot create '+dirs[d]+': File exists';
+  for(const d of dirs){
+    const full=resolvePath(ctx.cwd,d);
+    if(getNode(full))return `mkdir: cannot create '${d}': File exists`;
     if(p){ensureDir(full);continue;}
-    var gp=getParent(full);
-    if(!gp.parent)return 'mkdir: cannot create '+dirs[d]+': No such file or directory';
+    const gp=getParent(full);
+    if(!gp.parent)return `mkdir: cannot create '${d}': No such file or directory`;
     gp.parent.children[gp.name]=Dir({owner:state.user,group:state.user});
   }
   saveFS();
   return '';
 });
-def('rmdir','files','remove empty dir','rmdir <dir...>',function(args,ctx){
+def('rmdir','files','remove empty dirs','rmdir <dir...>',(args,ctx)=>{
   if(!args.length)return 'rmdir: missing operand';
-  for(var i=0;i<args.length;i++){
-    var full=resolvePath(ctx.cwd,args[i]);
-    var n=getNode(full);
-    if(!n)return 'rmdir: '+args[i]+': No such file or directory';
-    if(n.type!=='dir')return 'rmdir: '+args[i]+': Not a directory';
-    if(Object.keys(n.children).length)return 'rmdir: '+args[i]+': Directory not empty';
-    var gp=getParent(full);
-    if(gp.parent&&gp.parent.ro)return 'rmdir: '+args[i]+': Read-only';
-    if(gp.parent)delete gp.parent.children[gp.name];
+  for(const d of args){
+    const full=resolvePath(ctx.cwd,d);
+    const n=getNode(full);
+    if(!n)return `rmdir: failed to remove '${d}': No such file or directory`;
+    if(n.type!=='dir')return `rmdir: '${d}': Not a directory`;
+    if(Object.keys(n.children).length)return `rmdir: '${d}': Directory not empty`;
+    const {parent,name}=getParent(full);
+    if(parent.ro)return `rmdir: '${d}': Read-only file system`;
+    delete parent.children[name];
   }
   saveFS();
   return '';
 });
-def('rm','files','remove files','rm [-rf] [--no-preserve-root] <path...>',function(args,ctx){
-  var rec=false,force=false,noPreserve=false;
-  var paths=[];
-  for(var i=0;i<args.length;i++){
-    var a=args[i];
+def('rm','files','remove files','rm [-rf] [--no-preserve-root] <path...>',(args,ctx)=>{
+  let rec=false,force=false,noPreserve=false;
+  const paths=[];
+  for(const a of args){
     if(a==='--no-preserve-root'){noPreserve=true;continue;}
-    if(a.charAt(0)==='-'&&a.length>1){
-      for(var j=1;j<a.length;j++){
-        if(a[j]==='r'||a[j]==='R')rec=true;
-        else if(a[j]==='f')force=true;
-      }
-    }else paths.push(a);
+    if(a.startsWith('-')&&a.length>1){for(const c of a.slice(1)){if(c==='r'||c==='R')rec=true;else if(c==='f')force=true;}}
+    else paths.push(a);
   }
   if(!paths.length)return force?'':'rm: missing operand';
-  var out='';
-  for(var p=0;p<paths.length;p++){
-    var full=resolvePath(ctx.cwd,paths[p]);
+  let out='';
+  for(const p of paths){
+    const full=resolvePath(ctx.cwd,p);
     if(full==='/'){
-      if(!rec||!force){out+="rm: cannot remove '/': Is a directory\n";continue;}
+      if(!rec||!force){out+=`rm: cannot remove '/': Is a directory\n`;continue;}
       if(!noPreserve){out+="\x1b[31mrm: it is dangerous to operate recursively on '/'\x1b[0m\nrm: use --no-preserve-root to override\n";continue;}
       if(!ctx.sudo){out+="\x1b[31mrm: cannot remove '/': Permission denied\x1b[0m\n\x1b[90m(need root — try: sudo rm -rf / --no-preserve-root)\x1b[0m\n";continue;}
       triggerWipe();
       return '';
     }
     if(full===HOME&&ctx.cwd===HOME&&!force)return '\x1b[33mrm: refusing to remove $HOME\x1b[0m';
-    var n=getNode(full);
-    if(!n){if(!force)out+='rm: cannot remove '+paths[p]+': No such file or directory\n';continue;}
-    if(n.type==='dir'&&!rec){out+='rm: cannot remove '+paths[p]+': Is a directory\n';continue;}
-    var gp=getParent(full);
-    if(gp.parent&&gp.parent.ro){out+='rm: cannot remove '+paths[p]+': Read-only\n';continue;}
-    if(gp.parent)delete gp.parent.children[gp.name];
+    const n=getNode(full);
+    if(!n){if(!force)out+=`rm: cannot remove '${p}': No such file or directory\n`;continue;}
+    if(n.type==='dir'&&!rec){out+=`rm: cannot remove '${p}': Is a directory\n`;continue;}
+    const {parent,name}=getParent(full);
+    if(parent&&parent.ro){out+=`rm: cannot remove '${p}': Read-only file system\n`;continue;}
+    if(parent)delete parent.children[name];
   }
   saveFS();
   return out.replace(/\n$/,'');
 });
-def('cp','files','copy files','cp [-r] <src> <dest>',function(args,ctx){
-  var rec=false;
-  var rest=[];
-  for(var i=0;i<args.length;i++){
-    if(args[i]==='-r'||args[i]==='-R')rec=true;
-    else if(args[i].charAt(0)!=='-')rest.push(args[i]);
-  }
+def('cp','files','copy files','cp [-r] <src> <dest>',(args,ctx)=>{
+  const rec=args.includes('-r')||args.includes('-R');
+  const rest=args.filter(a=>!a.startsWith('-'));
   if(rest.length<2)return 'cp: missing destination file operand';
-  var src=getNode(resolvePath(ctx.cwd,rest[0]));
-  if(!src)return 'cp: cannot stat '+rest[0]+': No such file or directory';
-  if(src.type==='dir'&&!rec)return 'cp: -r not specified; omitting directory '+rest[0];
-  var destPath=resolvePath(ctx.cwd,rest[1]);
-  var dNode=getNode(destPath);
+  const src=getNode(resolvePath(ctx.cwd,rest[0]));
+  if(!src)return `cp: cannot stat '${rest[0]}': No such file or directory`;
+  if(src.type==='dir'&&!rec)return `cp: -r not specified; omitting directory '${rest[0]}'`;
+  let destPath=resolvePath(ctx.cwd,rest[1]);
+  const dNode=getNode(destPath);
   if(dNode&&dNode.type==='dir')destPath=destPath+'/'+rest[0].split('/').pop();
-  if(src.type==='file'){
-    writeFile(destPath,src.content);
-    var nn=getNode(destPath);
-    if(nn&&src.binary)nn.binary=true;
-  }else writeFile(destPath,'');
+  if(src.type==='file'){writeFile(destPath,src.content);const nn=getNode(destPath);if(nn&&src.binary)nn.binary=true;}
+  else writeFile(destPath,'');
   saveFS();
   return '';
 });
-def('mv','files','move files','mv <src> <dest>',function(args,ctx){
+def('mv','files','move files','mv <src> <dest>',(args,ctx)=>{
   if(args.length<2)return 'mv: missing destination file operand';
-  var srcPath=resolvePath(ctx.cwd,args[0]);
-  var src=getNode(srcPath);
-  if(!src)return 'mv: cannot stat '+args[0]+': No such file or directory';
-  var destPath=resolvePath(ctx.cwd,args[1]);
-  var dNode=getNode(destPath);
+  const srcPath=resolvePath(ctx.cwd,args[0]);
+  const src=getNode(srcPath);
+  if(!src)return `mv: cannot stat '${args[0]}': No such file or directory`;
+  let destPath=resolvePath(ctx.cwd,args[1]);
+  const dNode=getNode(destPath);
   if(dNode&&dNode.type==='dir')destPath=destPath+'/'+args[0].split('/').pop();
-  var sp=getParent(srcPath).parent;
-  var sn=getParent(srcPath).name;
-  var dp=getParent(destPath).parent;
-  var dn=getParent(destPath).name;
-  if(!dp)return 'mv: cannot move to '+args[1]+': No such file or directory';
-  if(sp&&sp.ro)return 'mv: '+args[0]+': Read-only';
-  if(dp.ro)return 'mv: '+args[1]+': Read-only';
+  const {parent:sp,name:sn}=getParent(srcPath);
+  const {parent:dp,name:dn}=getParent(destPath);
+  if(!dp)return `mv: cannot move to '${args[1]}': No such file or directory`;
+  if(sp&&sp.ro)return `mv: '${args[0]}': Read-only file system`;
+  if(dp.ro)return `mv: '${args[1]}': Read-only file system`;
   dp.children[dn]=src;
   if(sp)delete sp.children[sn];
   saveFS();
   return '';
 });
-def('stat','files','file status','stat <file>',function(args,ctx){
+def('stat','files','file status','stat <file>',(args,ctx)=>{
   if(!args.length)return 'stat: missing operand';
-  var out=[];
-  for(var i=0;i<args.length;i++){
-    var n=getNode(resolvePath(ctx.cwd,args[i]));
-    if(!n){out.push("stat: cannot statx '"+args[i]+"': No such file or directory");continue;}
-    out.push('  File: '+args[i]);
-    out.push('  Size: '+sizeOf(n)+'\tBlocks: '+Math.ceil(sizeOf(n)/512)+'\tIO Block: 4096  '+(n.type==='dir'?'directory':'regular file'));
-    out.push('Access: (0'+n.mode+'/'+permString(n)+')  Uid: (0/  '+n.owner+')   Gid: (0/  '+n.group+')');
-    out.push('Modify: '+new Date(n.mtime).toISOString());
+  const out=[];
+  for(const f of args){
+    const n=getNode(resolvePath(ctx.cwd,f));
+    if(!n){out.push(`stat: cannot statx '${f}': No such file or directory`);continue;}
+    out.push(`  File: ${f}`);
+    out.push(`  Size: ${sizeOf(n)}\tBlocks: ${Math.ceil(sizeOf(n)/512)}\tIO Block: 4096  ${n.type==='dir'?'directory':'regular file'}`);
+    out.push(`Access: (0${n.mode}/${permString(n)})  Uid: (0/  ${n.owner})   Gid: (0/  ${n.group})`);
+    out.push(`Modify: ${new Date(n.mtime).toISOString()}`);
     out.push('');
   }
   return out.join('\n');
 });
-def('file','files','file type','file <path...>',function(args,ctx){
+def('file','files','determine file type','file <path...>',(args,ctx)=>{
   if(!args.length)return 'file: missing operand';
-  return args.map(function(f){
-    var n=getNode(resolvePath(ctx.cwd,f));
-    if(!n)return f+': cannot open';
-    if(n.type==='dir')return f+': directory';
-    if(n.binary)return f+': binary data';
-    if(/^#!/.test(n.content))return f+': script, ASCII text executable';
-    if(n.content==='')return f+': empty';
-    return f+': ASCII text';
+  return args.map(f=>{
+    const n=getNode(resolvePath(ctx.cwd,f));
+    if(!n)return `${f}: cannot open`;
+    if(n.type==='dir')return `${f}: directory`;
+    if(n.binary)return `${f}: binary data`;
+    if(/^#!/.test(n.content))return `${f}: script, ASCII text executable`;
+    if(n.content==='')return `${f}: empty`;
+    return `${f}: ASCII text`;
   }).join('\n');
 });
-def('tree','files','directory tree','tree [-a] [path]',function(args,ctx){
-  var all=false;
-  var target='.';
-  for(var i=0;i<args.length;i++){
-    if(args[i]==='-a')all=true;
-    else if(args[i].charAt(0)!=='-')target=args[i];
-  }
-  var root=resolvePath(ctx.cwd,target);
-  var n=getNode(root);
+def('tree','files','directory tree','tree [-a] [path]',(args,ctx)=>{
+  const all=args.includes('-a');
+  const target=args.find(a=>!a.startsWith('-'))||'.';
+  const root=resolvePath(ctx.cwd,target);
+  const n=getNode(root);
   if(!n)return 'tree: No such file or directory';
-  var dirs=0,files=0;
+  let dirs=0,files=0;
   function walk(nd,prefix){
-    var names=Object.keys(nd.children).sort();
-    if(!all)names=names.filter(function(x){return x.charAt(0)!=='.';});
-    var out='';
-    for(var i=0;i<names.length;i++){
-      var last=i===names.length-1;
-      var child=nd.children[names[i]];
-      out+=prefix+(last?'└── ':'├── ')+colorName(names[i],child)+'\n';
+    let names=Object.keys(nd.children).sort();
+    if(!all)names=names.filter(x=>!x.startsWith('.'));
+    let out='';
+    names.forEach((name,i)=>{
+      const last=i===names.length-1;
+      const child=nd.children[name];
+      out+=prefix+(last?'└── ':'├── ')+colorName(name,child)+'\n';
       if(child.type==='dir'){dirs++;out+=walk(child,prefix+(last?'    ':'│   '));}
       else files++;
-    }
+    });
     return out;
   }
-  return '\x1b[1;34m'+target+'\x1b[0m\n'+walk(n,'')+'\n'+dirs+' directories, '+files+' files';
+  return '\x1b[1;34m'+target+'\x1b[0m\n'+walk(n,'')+`\n${dirs} directories, ${files} files`;
 });
-def('find','files','find files','find [path] [-name pat] [-type f|d]',function(args,ctx){
-  var start='.',name=null,type=null;
-  for(var i=0;i<args.length;i++){
+def('find','files','find files','find [path] [-name pat] [-type f|d]',(args,ctx)=>{
+  let start='.',name=null,type=null;
+  for(let i=0;i<args.length;i++){
     if(args[i]==='-name')name=args[++i];
     else if(args[i]==='-type')type=args[++i];
-    else if(args[i].charAt(0)!=='-')start=args[i];
+    else if(!args[i].startsWith('-'))start=args[i];
   }
-  var root=resolvePath(ctx.cwd,start);
-  var n=getNode(root);
-  if(!n)return "find: '"+start+"': No such file or directory";
-  var results=[];
-  var rx=name?new RegExp('^'+name.replace(/[.+^${}()|[\]\\]/g,'\\$&').replace(/\*/g,'.*').replace(/\?/g,'.')+'$'):null;
+  const root=resolvePath(ctx.cwd,start);
+  const n=getNode(root);
+  if(!n)return `find: '${start}': No such file or directory`;
+  const results=[];
+  const rx=name?new RegExp('^'+name.replace(/[.+^${}()|[\]\\]/g,'\\$&').replace(/\*/g,'.*').replace(/\?/g,'.')+'$'):null;
   function walk(nd,path){
     if((!type||(type==='d'&&nd.type==='dir')||(type==='f'&&nd.type==='file'))&&(!rx||rx.test(path.split('/').pop()||'/')))results.push(path);
-    if(nd.type==='dir'){
-      for(var k in nd.children)walk(nd.children[k],path==='/'?'/'+k:path+'/'+k);
-    }
+    if(nd.type==='dir'){for(const k of Object.keys(nd.children).sort())walk(nd.children[k],path==='/'?'/'+k:path+'/'+k);}
   }
   walk(n,root);
   return results.join('\n')||'';
 });
-def('du','files','disk usage','du [-hs] [path]',function(args,ctx){
-  var human=false,summary=false;
-  var target='.';
-  for(var i=0;i<args.length;i++){
-    if(args[i]==='-h')human=true;
-    else if(args[i]==='-s')summary=true;
-    else if(args[i]==='-hs'||args[i]==='-sh'){human=true;summary=true;}
-    else if(args[i].charAt(0)!=='-')target=args[i];
-  }
-  var root=resolvePath(ctx.cwd,target);
-  var n=getNode(root);
-  if(!n)return 'du: cannot access '+target;
-  var lines=[];
+def('du','files','disk usage','du [-hs] [path]',(args,ctx)=>{
+  const human=args.includes('-h'),summary=args.includes('-s');
+  const target=args.find(a=>!a.startsWith('-'))||'.';
+  const root=resolvePath(ctx.cwd,target);
+  const n=getNode(root);
+  if(!n)return `du: cannot access '${target}'`;
+  const lines=[];
   function walk(nd,path){
-    var total=nd.type==='file'?sizeOf(nd):4096;
+    let total=nd.type==='file'?sizeOf(nd):4096;
     if(nd.type==='dir'){
-      for(var k in nd.children)total+=walk(nd.children[k],path+'/'+k);
-      if(!summary)lines.push(String(human?humanSize(total):Math.ceil(total/1024)).padStart(6)+'\t'+path);
+      for(const k of Object.keys(nd.children))total+=walk(nd.children[k],path+'/'+k);
+      if(!summary)lines.push(`${human?humanSize(total):Math.ceil(total/1024)}`.padStart(6)+'\t'+path);
     }
     return total;
   }
-  var total=walk(n,root);
-  if(summary)lines.push(String(human?humanSize(total):Math.ceil(total/1024)).padStart(6)+'\t'+root);
+  const total=walk(n,root);
+  if(summary)lines.push(`${human?humanSize(total):Math.ceil(total/1024)}`.padStart(6)+'\t'+root);
   return lines.join('\n');
 });
-def('df','files','disk free','df',function(){
-  var sz=0;
-  try{var keys=[K_FS,K_META,K_STATE];for(var i=0;i<keys.length;i++){var v=localStorage.getItem(keys[i]);if(v)sz+=v.length;}}catch(e){}
-  var used=sz,total=5*1024*1024;
+def('df','files','disk free','df',()=>{
+  let sz=0;
+  try{for(const k of[K_FS,K_META,K_STATE]){const v=localStorage.getItem(k);if(v)sz+=v.length;}}catch(e){}
+  const used=sz,total=5*1024*1024;
   return 'Filesystem      Size  Used Avail Use% Mounted on\n'
     +pad('localStorage',15)+pad(humanSize(total),6)+pad(humanSize(used),6)+pad(humanSize(total-used),6)+pad(((used/total)*100).toFixed(1)+'%',6)+'/\n'
     +pad('tmpfs',15)+pad('512M',6)+pad('0',6)+pad('512M',6)+pad('0%',6)+'/tmp\n';
 });
-def('chmod','files','change mode','chmod <mode> <file...>',function(args,ctx){
+def('chmod','files','change mode','chmod <mode> <file...>',(args,ctx)=>{
   if(args.length<2)return 'chmod: missing operand';
-  var mode=args[0];
-  for(var i=1;i<args.length;i++){
-    var n=getNode(resolvePath(ctx.cwd,args[i]));
-    if(!n){print('chmod: cannot access '+args[i]);continue;}
+  const mode=args[0];
+  for(const f of args.slice(1)){
+    const n=getNode(resolvePath(ctx.cwd,f));
+    if(!n){print(`chmod: cannot access '${f}'`);continue;}
     if(/^[0-7]{3}$/.test(mode))n.mode=mode;
   }
   saveFS();
   return '';
 });
-def('chown','files','change owner','chown <owner> <file...>',function(args,ctx){
+def('chown','files','change owner','chown <owner> <file...>',(args,ctx)=>{
   if(args.length<2)return 'chown: missing operand';
-  for(var i=1;i<args.length;i++){
-    var n=getNode(resolvePath(ctx.cwd,args[i]));
-    if(n){
-      n.owner=args[0].split(':')[0];
-      if(args[0].indexOf(':')>=0)n.group=args[0].split(':')[1];
-    }
+  for(const f of args.slice(1)){
+    const n=getNode(resolvePath(ctx.cwd,f));
+    if(n){n.owner=args[0].split(':')[0];if(args[0].includes(':'))n.group=args[0].split(':')[1];}
   }
   saveFS();
   return '';
 });
-def('basename','files','strip directory','basename <path>',function(args){
+def('basename','files','strip directory','basename <path>',(args)=>{
   if(!args[0])return 'basename: missing operand';
   return args[0].replace(/\/+$/,'').split('/').pop()||'/';
 });
-def('dirname','files','strip filename','dirname <path>',function(args){
+def('dirname','files','strip filename','dirname <path>',(args)=>{
   if(!args[0])return 'dirname: missing operand';
-  var p=args[0].replace(/\/+$/,'').split('/');
+  const p=args[0].replace(/\/+$/,'').split('/');
   p.pop();
   return p.join('/')||'.';
 });
-def('realpath','files','resolve path','realpath <path>',function(args,ctx){
+def('realpath','files','resolve path','realpath <path>',(args,ctx)=>{
   if(!args[0])return 'realpath: missing operand';
   return resolvePath(ctx.cwd,args[0]);
 });
-def('diff','files','compare files','diff <f1> <f2>',function(args,ctx){
+def('diff','files','compare files','diff <f1> <f2>',(args,ctx)=>{
   if(args.length<2)return 'diff: missing operand';
-  var a=getNode(resolvePath(ctx.cwd,args[0]));
-  var b=getNode(resolvePath(ctx.cwd,args[1]));
+  const a=getNode(resolvePath(ctx.cwd,args[0]));
+  const b=getNode(resolvePath(ctx.cwd,args[1]));
   if(!a||!b)return 'diff: No such file or directory';
-  var la=a.content.replace(/\n$/,'').split('\n');
-  var lb=b.content.replace(/\n$/,'').split('\n');
-  var out=[];
-  var max=Math.max(la.length,lb.length);
-  for(var i=0;i<max;i++){
+  const la=a.content.replace(/\n$/,'').split('\n'),lb=b.content.replace(/\n$/,'').split('\n');
+  const out=[];
+  const max=Math.max(la.length,lb.length);
+  for(let i=0;i<max;i++){
     if(la[i]!==lb[i]){
-      out.push('\x1b[36m'+(i+1)+'c'+(i+1)+'\x1b[0m');
-      if(la[i]!==undefined)out.push('\x1b[31m< '+la[i]+'\x1b[0m');
+      out.push(`\x1b[36m${i+1}c${i+1}\x1b[0m`);
+      if(la[i]!==undefined)out.push(`\x1b[31m< ${la[i]}\x1b[0m`);
       out.push('\x1b[90m---\x1b[0m');
-      if(lb[i]!==undefined)out.push('\x1b[32m> '+lb[i]+'\x1b[0m');
+      if(lb[i]!==undefined)out.push(`\x1b[32m> ${lb[i]}\x1b[0m`);
     }
   }
   return out.join('\n');
 });
 
-/* ══════════ Text ══════════ */
-def('grep','text','search text','grep [-inv] <pat> [file...]',function(args,ctx){
-  var i2=false,v=false,n=false,c=false;
-  var rest=[];
-  for(var i=0;i<args.length;i++){
-    var a=args[i];
-    if(a.charAt(0)==='-'&&a.length>1){
-      for(var j=1;j<a.length;j++){
-        if(a[j]==='i')i2=true;
-        else if(a[j]==='v')v=true;
-        else if(a[j]==='n')n=true;
-        else if(a[j]==='c')c=true;
-      }
-    }else rest.push(a);
+/* ═══════════════════════════════════════════════════════════
+   TEXT
+   ═══════════════════════════════════════════════════════════ */
+def('grep','text','search text','grep [-inv] <pat> [file...]',(args,ctx)=>{
+  let i=false,v=false,n=false,c=false;
+  const rest=[];
+  for(const a of args){
+    if(a.startsWith('-')&&a.length>1){for(const x of a.slice(1)){if(x==='i')i=true;else if(x==='v')v=true;else if(x==='n')n=true;else if(x==='c')c=true;}}
+    else rest.push(a);
   }
-  var pat=rest.shift();
+  const pat=rest.shift();
   if(pat===undefined)return 'usage: grep [OPTIONS] PATTERN [FILE...]';
-  var src=rest.length?readStdinOrFiles(rest,ctx):(ctx.stdin||'');
-  var rx;
-  try{rx=new RegExp(pat,i2?'i':'');}catch(e){return 'grep: invalid pattern';}
-  var hits=[];
-  var lines=src.replace(/\n$/,'').split('\n');
-  for(var k=0;k<lines.length;k++){
-    var m=rx.test(lines[k]);
-    if(m!==v)hits.push({l:lines[k],i:k+1});
-  }
+  const src=rest.length?readStdinOrFiles(rest,ctx):(ctx.stdin||'');
+  let rx;
+  try{rx=new RegExp(pat,i?'i':'');}catch(e){return 'grep: invalid pattern';}
+  const hits=[];
+  src.replace(/\n$/,'').split('\n').forEach((l,idx)=>{
+    const m=rx.test(l);
+    if(m!==v)hits.push({l,i:idx+1});
+  });
   if(c)return String(hits.length);
-  return hits.map(function(h){
-    return (n?'\x1b[35m'+h.i+'\x1b[0m:':'')+h.l.replace(rx,function(m){return '\x1b[1;31m'+m+'\x1b[0m';});
-  }).join('\n');
+  return hits.map(h=>(n?`\x1b[35m${h.i}\x1b[0m:`:'')+h.l.replace(rx,m=>`\x1b[1;31m${m}\x1b[0m`)).join('\n');
 });
-def('sed','text','stream editor','sed s/old/new/[g] [file]',function(args,ctx){
-  var script=null;
-  var files=[];
-  for(var i=0;i<args.length;i++){
-    if(args[i].charAt(0)!=='-'&&args[i].indexOf('s/')>=0&&!script)script=args[i];
-    else if(args[i].charAt(0)!=='-')files.push(args[i]);
-  }
+def('sed','text','stream editor','sed s/old/new/[g] [file]',(args,ctx)=>{
+  const script=args.find(a=>!a.startsWith('-')&&a.includes('s/'));
   if(!script)return 'sed: no expression';
-  var m=script.match(/^s\/(.*?)\/(.*?)\/([gi]*)$/);
+  const m=script.match(/^s\/(.*?)\/(.*?)\/([gi]*)$/);
   if(!m)return 'sed: invalid expression';
-  var pat=m[1],rep=m[2],flags=m[3];
-  var src=files.length?readStdinOrFiles(files,ctx):(ctx.stdin||'');
-  var rx;
+  const [,pat,rep,flags]=m;
+  const files=args.filter(a=>!a.startsWith('-')&&a!==script);
+  const src=files.length?readStdinOrFiles(files,ctx):(ctx.stdin||'');
+  let rx;
   try{rx=new RegExp(pat,flags);}catch(e){return 'sed: invalid regex';}
-  return src.replace(/\n$/,'').split('\n').map(function(l){return l.replace(rx,rep);}).join('\n');
+  return src.replace(/\n$/,'').split('\n').map(l=>l.replace(rx,rep)).join('\n');
 });
-def('sort','text','sort lines','sort [-rnu] [file]',function(args,ctx){
-  var rev=false,num=false,uniq=false;
-  var files=[];
-  for(var i=0;i<args.length;i++){
-    var a=args[i];
-    if(a==='-r')rev=true;
-    else if(a==='-n')num=true;
-    else if(a==='-u')uniq=true;
-    else if(a==='-rn'||a==='-nr'){rev=true;num=true;}
-    else if(a.charAt(0)!=='-')files.push(a);
-  }
-  var src=files.length?readStdinOrFiles(files,ctx):(ctx.stdin||'');
-  var lines=src.replace(/\n$/,'').split('\n');
-  lines.sort(function(a,b){return num?(parseFloat(a)||0)-(parseFloat(b)||0):a.localeCompare(b);});
+def('sort','text','sort lines','sort [-rnu] [file]',(args,ctx)=>{
+  const rev=args.includes('-r'),num=args.includes('-n'),uniq=args.includes('-u');
+  const files=args.filter(a=>!a.startsWith('-'));
+  const src=files.length?readStdinOrFiles(files,ctx):(ctx.stdin||'');
+  let lines=src.replace(/\n$/,'').split('\n');
+  lines.sort((a,b)=>num?(parseFloat(a)||0)-(parseFloat(b)||0):a.localeCompare(b));
   if(rev)lines.reverse();
-  if(uniq)lines=lines.filter(function(l,i){return i===0||l!==lines[i-1];});
+  if(uniq)lines=lines.filter((l,i)=>i===0||l!==lines[i-1]);
   return lines.join('\n');
 });
-def('uniq','text','filter duplicate lines','uniq [-c] [file]',function(args,ctx){
-  var count=false;
-  var files=[];
-  for(var i=0;i<args.length;i++){
-    if(args[i]==='-c')count=true;
-    else if(args[i].charAt(0)!=='-')files.push(args[i]);
-  }
-  var src=files.length?readStdinOrFiles(files,ctx):(ctx.stdin||'');
-  var lines=src.replace(/\n$/,'').split('\n');
-  var out=[];
-  var prev=null,n=0;
-  function flush(){if(prev!==null)out.push(count?String(n).padStart(7)+' '+prev:prev);}
-  for(var k=0;k<lines.length;k++){
-    if(lines[k]===prev)n++;
-    else{flush();prev=lines[k];n=1;}
-  }
+def('uniq','text','filter duplicate lines','uniq [-c] [file]',(args,ctx)=>{
+  const count=args.includes('-c');
+  const files=args.filter(a=>!a.startsWith('-'));
+  const src=files.length?readStdinOrFiles(files,ctx):(ctx.stdin||'');
+  const lines=src.replace(/\n$/,'').split('\n');
+  const out=[];
+  let prev=null,n=0;
+  const flush=()=>{if(prev!==null)out.push(count?String(n).padStart(7)+' '+prev:prev);};
+  for(const l of lines){if(l===prev)n++;else{flush();prev=l;n=1;}}
   flush();
   return out.join('\n');
 });
-def('cut','text','cut fields','cut -d<d> -f<fields> [file]',function(args,ctx){
-  var delim='\t';
-  var fields=[1];
-  var rest=[];
-  for(var i=0;i<args.length;i++){
-    var a=args[i];
-    if(a.indexOf('-d')===0)delim=a.length>2?a.slice(2):args[++i];
-    else if(a.indexOf('-f')===0)fields=(a.length>2?a.slice(2):args[++i]).split(',').map(Number);
-    else if(a.charAt(0)==='-')continue;
+def('cut','text','cut fields','cut -d<d> -f<fields> [file]',(args,ctx)=>{
+  let delim='\t',fields=[1];
+  const rest=[];
+  for(let i=0;i<args.length;i++){
+    const a=args[i];
+    if(a.startsWith('-d'))delim=a.length>2?a.slice(2):args[++i];
+    else if(a.startsWith('-f'))fields=(a.length>2?a.slice(2):args[++i]).split(',').map(Number);
+    else if(a.startsWith('-'))continue;
     else rest.push(a);
   }
-  var src=rest.length?readStdinOrFiles(rest,ctx):(ctx.stdin||'');
-  return src.replace(/\n$/,'').split('\n').map(function(l){
-    return fields.map(function(f){return l.split(delim)[f-1]||'';}).join(delim);
-  }).join('\n');
+  const src=rest.length?readStdinOrFiles(rest,ctx):(ctx.stdin||'');
+  return src.replace(/\n$/,'').split('\n').map(l=>fields.map(f=>(l.split(delim)[f-1]||'')).join(delim)).join('\n');
 });
-def('tr','text','translate','tr <from> <to>',function(args,ctx){
-  var src=ctx.stdin||'';
-  if(args[0]==='-d')return src.split('').filter(function(c){return args[1].indexOf(c)<0;}).join('');
+def('tr','text','translate chars','tr <from> <to>',(args,ctx)=>{
+  const src=ctx.stdin||'';
+  if(args[0]==='-d')return src.split('').filter(c=>!args[1].includes(c)).join('');
   if(!args[0]||!args[1])return src;
-  return src.split('').map(function(c){
-    var i=args[0].indexOf(c);
-    return i>=0?(args[1][i]!==undefined?args[1][i]:args[1][args[1].length-1]):c;
-  }).join('');
+  return src.split('').map(c=>{const i=args[0].indexOf(c);return i>=0?(args[1][i]!==undefined?args[1][i]:args[1][args[1].length-1]):c;}).join('');
 });
-def('rev','text','reverse lines','rev [file]',function(args,ctx){
-  return readStdinOrFiles(args,ctx).replace(/\n$/,'').split('\n').map(function(l){return l.split('').reverse().join('');}).join('\n');
+def('rev','text','reverse lines','rev [file]',(args,ctx)=>{
+  const src=readStdinOrFiles(args,ctx);
+  return src.replace(/\n$/,'').split('\n').map(l=>l.split('').reverse().join('')).join('\n');
 });
-def('xxd','text','hex dump','xxd [file]',function(args,ctx){
-  var src=readStdinOrFiles(args,ctx);
-  var bytes=new TextEncoder().encode(src);
-  var out=[];
-  for(var i=0;i<Math.min(bytes.length,512);i+=16){
-    var chunk=bytes.slice(i,i+16);
-    var hex=Array.from(chunk).map(function(b){return b.toString(16).padStart(2,'0');}).join(' ').padEnd(47);
-    var ascii=Array.from(chunk).map(function(b){return (b>=32&&b<127)?String.fromCharCode(b):'.';}).join('');
+def('xxd','text','hex dump','xxd [file]',(args,ctx)=>{
+  const src=readStdinOrFiles(args,ctx);
+  const bytes=new TextEncoder().encode(src);
+  const out=[];
+  for(let i=0;i<Math.min(bytes.length,512);i+=16){
+    const chunk=bytes.slice(i,i+16);
+    const hex=Array.from(chunk).map(b=>b.toString(16).padStart(2,'0')).join(' ').padEnd(47);
+    const ascii=Array.from(chunk).map(b=>(b>=32&&b<127)?String.fromCharCode(b):'.').join('');
     out.push(i.toString(16).padStart(8,'0')+': '+hex+'  '+ascii);
   }
   return out.join('\n');
 });
 
-/* ══════════ Hash ══════════ */
+/* ═══════════════════════════════════════════════════════════
+   HASH
+   ═══════════════════════════════════════════════════════════ */
 async function realHash(algo,text){
   try{
-    if(!crypto||!crypto.subtle)throw new Error('crypto.subtle unavailable');
-    var buf=await crypto.subtle.digest(algo,new TextEncoder().encode(text));
-    return Array.from(new Uint8Array(buf)).map(function(b){return b.toString(16).padStart(2,'0');}).join('');
+    if(!crypto||!crypto.subtle)throw new Error('crypto.subtle unavailable (needs HTTPS)');
+    const buf=await crypto.subtle.digest(algo,new TextEncoder().encode(text));
+    return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
   }catch(e){return null;}
 }
 function md5(str){
-  function rl(n,c){return (n<<c)|(n>>>(32-c));}
-  function au(x,y){var l=(x&0xFFFF)+(y&0xFFFF);return (((x>>16)+(y>>16)+(l>>16))<<16)|(l&0xFFFF);}
+  function rl(n,c){return(n<<c)|(n>>>(32-c));}
+  function au(x,y){const l=(x&0xFFFF)+(y&0xFFFF);return(((x>>16)+(y>>16)+(l>>16))<<16)|(l&0xFFFF);}
   function cmn(q,a,b,x,s,t){return au(rl(au(au(a,q),au(x,t)),s),b);}
   function ff(a,b,c,d,x,s,t){return cmn((b&c)|((~b)&d),a,b,x,s,t);}
   function gg(a,b,c,d,x,s,t){return cmn((b&d)|(c&(~d)),a,b,x,s,t);}
   function hh(a,b,c,d,x,s,t){return cmn(b^c^d,a,b,x,s,t);}
   function ii(a,b,c,d,x,s,t){return cmn(c^(b|(~d)),a,b,x,s,t);}
-  function sb(s){
-    var i,n=s.length*8,b=[];
-    for(i=0;i<n;i+=8)b[i>>5]|=(s.charCodeAt(i/8)&0xFF)<<(i%32);
-    for(i=n;i<n+64;i+=8)b[i>>5]|=(0x80<<(i%32));
-    while(b.length%16!==14)b.push(0);
-    b.push(n&0xFFFFFFFF);
-    b.push((n>>>32)&0xFFFFFFFF);
-    return b;
-  }
-  function hx(n){var s='',j;for(j=0;j<=3;j++)s+=('0'+((n>>>(j*8))&0xFF).toString(16)).slice(-2);return s;}
+  function sb(s){let i;const n=s.length*8;const b=[];for(i=0;i<n;i+=8)b[i>>5]|=(s.charCodeAt(i/8)&0xFF)<<(i%32);for(i=n;i<n+64;i+=8)b[i>>5]|=(0x80<<(i%32));while(b.length%16!==14)b.push(0);b.push(n&0xFFFFFFFF);b.push((n>>>32)&0xFFFFFFFF);return b;}
+  function hx(n){let s='',j;for(j=0;j<=3;j++)s+=('0'+((n>>>(j*8))&0xFF).toString(16)).slice(-2);return s;}
   str=unescape(encodeURIComponent(str));
-  var x=sb(str);
-  var a=1732584193,b=-271733879,c=-1732584194,d=271733878;
-  for(var i=0;i<x.length;i+=16){
-    var oa=a,ob=b,oc=c,od=d;
+  const x=sb(str);
+  let a=1732584193,b=-271733879,c=-1732584194,d=271733878;
+  for(let i=0;i<x.length;i+=16){
+    const oa=a,ob=b,oc=c,od=d;
     a=ff(a,b,c,d,x[i],7,-680876936);d=ff(d,a,b,c,x[i+1],12,-389564586);c=ff(c,d,a,b,x[i+2],17,606105819);b=ff(b,c,d,a,x[i+3],22,-1044525330);
     a=ff(a,b,c,d,x[i+4],7,-176418897);d=ff(d,a,b,c,x[i+5],12,1200080426);c=ff(c,d,a,b,x[i+6],17,-1473231341);b=ff(b,c,d,a,x[i+7],22,-45705983);
     a=ff(a,b,c,d,x[i+8],7,1770035416);d=ff(d,a,b,c,x[i+9],12,-1958414417);c=ff(c,d,a,b,x[i+10],17,-42063);b=ff(b,c,d,a,x[i+11],22,-1990404162);
@@ -1521,283 +1474,255 @@ function md5(str){
   }
   return hx(a)+hx(b)+hx(c)+hx(d);
 }
-def('md5sum','hash','MD5 digest','md5sum [file...]',function(args,ctx){
-  var targets=args.length?args:[null];
-  return targets.map(function(f){
-    var src=f===null?(ctx.stdin||''):readStdinOrFiles([f],ctx);
+def('md5sum','hash','MD5 message digest','md5sum [file...]',(args,ctx)=>{
+  const targets=args.length?args:[null];
+  return targets.map(f=>{
+    const src=f===null?(ctx.stdin||''):readStdinOrFiles([f],ctx);
     return md5(src)+'  '+(f||'-');
   }).join('\n');
 });
-def('sha1sum','hash','SHA-1 digest','sha1sum [file...]',async function(args,ctx){
-  var out=[];
-  var targets=args.length?args:[null];
-  for(var i=0;i<targets.length;i++){
-    var f=targets[i];
-    var src=f===null?(ctx.stdin||''):readStdinOrFiles([f],ctx);
-    var h=await realHash('SHA-1',src);
+def('sha1sum','hash','SHA-1 message digest','sha1sum [file...]',async(args,ctx)=>{
+  const out=[];
+  for(const f of (args.length?args:[null])){
+    const src=f===null?(ctx.stdin||''):readStdinOrFiles([f],ctx);
+    const h=await realHash('SHA-1',src);
     out.push((h||'[crypto unavailable]')+'  '+(f||'-'));
   }
   return out.join('\n');
 });
-def('sha256sum','hash','SHA-256 digest','sha256sum [file...]',async function(args,ctx){
-  var out=[];
-  var targets=args.length?args:[null];
-  for(var i=0;i<targets.length;i++){
-    var f=targets[i];
-    var src=f===null?(ctx.stdin||''):readStdinOrFiles([f],ctx);
-    var h=await realHash('SHA-256',src);
+def('sha256sum','hash','SHA-256 message digest','sha256sum [file...]',async(args,ctx)=>{
+  const out=[];
+  for(const f of (args.length?args:[null])){
+    const src=f===null?(ctx.stdin||''):readStdinOrFiles([f],ctx);
+    const h=await realHash('SHA-256',src);
     out.push((h||'[crypto unavailable]')+'  '+(f||'-'));
   }
   return out.join('\n');
 });
-def('base64','text','base64','base64 [-d] [file]',function(args,ctx){
-  var dec=false;
-  var files=[];
-  for(var i=0;i<args.length;i++){
-    if(args[i]==='-d')dec=true;
-    else if(args[i].charAt(0)!=='-')files.push(args[i]);
-  }
-  var src=files.length?readStdinOrFiles(files,ctx):(ctx.stdin||'');
+def('base64','text','base64 encode/decode','base64 [-d] [file]',(args,ctx)=>{
+  const dec=args.includes('-d');
+  const files=args.filter(a=>a!=='-d');
+  const src=files.length?readStdinOrFiles(files,ctx):(ctx.stdin||'');
   try{
     if(dec)return decodeURIComponent(escape(atob(src.trim())));
     return btoa(unescape(encodeURIComponent(src)));
   }catch(e){return 'base64: invalid input';}
 });
 
-/* ══════════ Archive ══════════ */
+/* ═══════════════════════════════════════════════════════════
+   ARCHIVE
+   ═══════════════════════════════════════════════════════════ */
 async function realGzip(text){
   try{
-    var cs=new CompressionStream('gzip');
-    var w=cs.writable.getWriter();
+    const cs=new CompressionStream('gzip');
+    const w=cs.writable.getWriter();
     w.write(new TextEncoder().encode(text));
     w.close();
-    var buf=await new Response(cs.readable).arrayBuffer();
+    const buf=await new Response(cs.readable).arrayBuffer();
     return new Uint8Array(buf);
   }catch(e){return null;}
 }
 async function realGunzip(bytes){
   try{
-    var ds=new DecompressionStream('gzip');
-    var w=ds.writable.getWriter();
+    const ds=new DecompressionStream('gzip');
+    const w=ds.writable.getWriter();
     w.write(bytes);
     w.close();
-    var buf=await new Response(ds.readable).arrayBuffer();
+    const buf=await new Response(ds.readable).arrayBuffer();
     return new TextDecoder().decode(buf);
   }catch(e){return null;}
 }
-def('gzip','archive','compress gzip','gzip <file>',async function(args,ctx){
-  if(!args.length)return 'gzip: missing file operand';
-  var out=[];
-  for(var i=0;i<args.length;i++){
-    var f=args[i];
-    var path=resolvePath(ctx.cwd,f);
-    var n=getNode(path);
-    if(!n||n.type!=='file'){out.push('gzip: '+f+': No such file');continue;}
-    var bytes=await realGzip(n.content);
-    if(!bytes){out.push('gzip: '+f+': CompressionStream unavailable');continue;}
-    var outName=f+'.gz';
-    var outPath=resolvePath(ctx.cwd,outName);
-    var gp=getParent(outPath);
-    if(gp.parent){
-      var b64='';
-      for(var j=0;j<bytes.length;j+=0x8000)b64+=String.fromCharCode.apply(null,bytes.subarray(j,j+0x8000));
-      b64=btoa(b64);
-      gp.parent.children[gp.name]=F(b64,{binary:true,mtime:Date.now()});
-      var sp=getParent(path);
-      if(sp.parent)delete sp.parent.children[sp.name];
-      out.push(f+' -> '+outName+'  ('+n.content.length+' -> '+bytes.length+' bytes)');
-    }
-  }
-  saveFS();
-  return out.join('\n');
-});
-def('gunzip','archive','decompress gzip','gunzip <file.gz>',async function(args,ctx){
-  if(!args.length)return 'gunzip: missing file operand';
-  var out=[];
-  for(var i=0;i<args.length;i++){
-    var f=args[i];
-    var path=resolvePath(ctx.cwd,f);
-    var n=getNode(path);
-    if(!n||n.type!=='file'){out.push('gunzip: '+f+': No such file');continue;}
-    if(!n.binary){out.push('gunzip: '+f+': not a gzip file');continue;}
-    var bin=atob(n.content);
-    var arr=new Uint8Array(bin.length);
-    for(var j=0;j<bin.length;j++)arr[j]=bin.charCodeAt(j);
-    var text=await realGunzip(arr);
-    if(text===null){out.push('gunzip: '+f+': invalid data');continue;}
-    var outName=f.replace(/\.gz$/,'')||f+'.out';
-    writeFile(resolvePath(ctx.cwd,outName),text);
-    var gp=getParent(path);
-    if(gp.parent)delete gp.parent.children[gp.name];
-    out.push(f+' -> '+outName);
-  }
-  saveFS();
-  return out.join('\n');
-});
 function tarPack(entries){
-  var enc=new TextEncoder();
-  var blocks=[];
-  for(var e=0;e<entries.length;e++){
-    var entry=entries[e];
-    var content=typeof entry.content==='string'?enc.encode(entry.content):entry.content;
-    var header=new Uint8Array(512);
-    var nameBytes=enc.encode(entry.name).slice(0,100);
-    for(var i=0;i<nameBytes.length;i++)header[i]=nameBytes[i];
-    var mode=enc.encode((entry.mode||'0000644').padStart(7,'0')+'\0');
-    for(var i=0;i<mode.length;i++)header[100+i]=mode[i];
-    var uid=enc.encode('0001000\0');
-    for(var i=0;i<uid.length;i++)header[108+i]=uid[i];
-    for(var i=0;i<uid.length;i++)header[116+i]=uid[i];
-    var sizeStr=content.length.toString(8).padStart(11,'0')+'\0';
-    var sizeBytes=enc.encode(sizeStr);
-    for(var i=0;i<sizeBytes.length;i++)header[124+i]=sizeBytes[i];
-    var mtimeStr=Math.floor(Date.now()/1000).toString(8).padStart(11,'0')+'\0';
-    var mtimeBytes=enc.encode(mtimeStr);
-    for(var i=0;i<mtimeBytes.length;i++)header[136+i]=mtimeBytes[i];
-    for(var i=0;i<8;i++)header[148+i]=32;
+  const enc=new TextEncoder();
+  const blocks=[];
+  for(const e of entries){
+    const content=typeof e.content==='string'?enc.encode(e.content):e.content;
+    const header=new Uint8Array(512);
+    header.set(enc.encode(e.name).slice(0,100),0);
+    header.set(enc.encode((e.mode||'0000644').padStart(7,'0')+'\0'),100);
+    header.set(enc.encode('0001000\0'),108);
+    header.set(enc.encode('0001000\0'),116);
+    header.set(enc.encode(content.length.toString(8).padStart(11,'0')+'\0'),124);
+    header.set(enc.encode(Math.floor(Date.now()/1000).toString(8).padStart(11,'0')+'\0'),136);
+    header.set(enc.encode('        '),148);
     header[156]=48;
-    var ustar=enc.encode('ustar');
-    for(var i=0;i<ustar.length;i++)header[257+i]=ustar[i];
-    header[262]=0;
-    var v=enc.encode('00');
-    for(var i=0;i<v.length;i++)header[263+i]=v[i];
-    var sum=0;
-    for(var i=0;i<512;i++)sum+=header[i];
-    var csum=enc.encode(sum.toString(8).padStart(6,'0')+'\0 ');
-    for(var i=0;i<csum.length;i++)header[148+i]=csum[i];
+    header.set(enc.encode('ustar'),257);
+    header.set(enc.encode('00'),263);
+    let sum=0;for(let i=0;i<512;i++)sum+=header[i];
+    header.set(enc.encode(sum.toString(8).padStart(6,'0')+'\0 '),148);
     blocks.push(header);
-    var padded=new Uint8Array(Math.ceil(content.length/512)*512);
+    const padded=new Uint8Array(Math.ceil(content.length/512)*512);
     padded.set(content);
     blocks.push(padded);
   }
   blocks.push(new Uint8Array(1024));
-  var total=0;
-  for(var i=0;i<blocks.length;i++)total+=blocks[i].length;
-  var out=new Uint8Array(total);
-  var off=0;
-  for(var i=0;i<blocks.length;i++){out.set(blocks[i],off);off+=blocks[i].length;}
+  const total=blocks.reduce((s,b)=>s+b.length,0);
+  const out=new Uint8Array(total);
+  let off=0;
+  for(const b of blocks){out.set(b,off);off+=b.length;}
   return out;
 }
 function tarUnpack(bytes){
-  var dec=new TextDecoder();
-  var entries=[];
-  var off=0;
+  const dec=new TextDecoder();
+  const entries=[];
+  let off=0;
   while(off+512<=bytes.length){
-    var header=bytes.slice(off,off+512);
-    var zero=true;
-    for(var i=0;i<512;i++)if(header[i]){zero=false;break;}
+    const header=bytes.slice(off,off+512);
+    let zero=true;
+    for(let i=0;i<512;i++)if(header[i]){zero=false;break;}
     if(zero)break;
-    var name=dec.decode(header.slice(0,100)).replace(/\0.*$/,'');
+    const name=dec.decode(header.slice(0,100)).replace(/\0.*$/,'');
     if(!name)break;
-    var size=parseInt(dec.decode(header.slice(124,136)).replace(/\0.*$/,'').trim(),8)||0;
+    const size=parseInt(dec.decode(header.slice(124,136)).replace(/\0.*$/,'').trim(),8)||0;
     off+=512;
-    entries.push({name:name,content:bytes.slice(off,off+size)});
+    entries.push({name,content:bytes.slice(off,off+size)});
     off+=Math.ceil(size/512)*512;
   }
   return entries;
 }
-def('tar','archive','tar archive','tar [-cxt] [-f archive] [files...]',async function(args,ctx){
-  var create=false,extract=false,list=false,archive=null;
-  var files=[];
-  for(var i=0;i<args.length;i++){
-    var a=args[i];
-    if(a==='-cf'||a==='-xf'||a==='-tf'){create=a.charAt(1)==='c';extract=a.charAt(1)==='x';list=a.charAt(1)==='t';archive=args[++i];continue;}
+def('gzip','archive','compress with gzip','gzip <file>',async(args,ctx)=>{
+  if(!args.length)return 'gzip: missing file operand';
+  const out=[];
+  for(const f of args){
+    const path=resolvePath(ctx.cwd,f);
+    const n=getNode(path);
+    if(!n||n.type!=='file'){out.push(`gzip: ${f}: No such file`);continue;}
+    const bytes=await realGzip(n.content);
+    if(!bytes){out.push(`gzip: ${f}: CompressionStream unavailable`);continue;}
+    const outName=f+'.gz';
+    const outPath=resolvePath(ctx.cwd,outName);
+    const {parent,name}=getParent(outPath);
+    if(parent){
+      let b64='';
+      const chunk=0x8000;
+      for(let i=0;i<bytes.length;i+=chunk)b64+=String.fromCharCode.apply(null,bytes.subarray(i,i+chunk));
+      b64=btoa(b64);
+      parent.children[name]=F(b64,{binary:true,mtime:Date.now()});
+      const {parent:sp,name:sn}=getParent(path);
+      if(sp)delete sp.children[sn];
+      out.push(`${f} → ${outName}  \x1b[90m(${n.content.length} → ${bytes.length} bytes)\x1b[0m`);
+    }
+  }
+  saveFS();
+  return out.join('\n');
+});
+def('gunzip','archive','decompress gzip','gunzip <file.gz>',async(args,ctx)=>{
+  if(!args.length)return 'gunzip: missing file operand';
+  const out=[];
+  for(const f of args){
+    const path=resolvePath(ctx.cwd,f);
+    const n=getNode(path);
+    if(!n||n.type!=='file'){out.push(`gunzip: ${f}: No such file`);continue;}
+    if(!n.binary){out.push(`gunzip: ${f}: not a gzip file`);continue;}
+    const bin=atob(n.content);
+    const arr=new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);
+    const text=await realGunzip(arr);
+    if(text===null){out.push(`gunzip: ${f}: invalid gzip data`);continue;}
+    const outName=f.replace(/\.gz$/,'')||f+'.out';
+    writeFile(resolvePath(ctx.cwd,outName),text);
+    const {parent,name}=getParent(path);
+    if(parent)delete parent.children[name];
+    out.push(`${f} → ${outName}`);
+  }
+  saveFS();
+  return out.join('\n');
+});
+def('tar','archive','tar archive','tar [-cxt] [-f archive] [files...]',async(args,ctx)=>{
+  let create=false,extract=false,list=false,archive=null;
+  const files=[];
+  for(let i=0;i<args.length;i++){
+    const a=args[i];
+    if(a==='-cf'||a==='-xf'||a==='-tf'){create=a[1]==='c';extract=a[1]==='x';list=a[1]==='t';archive=args[++i];continue;}
     if(a==='-f'){archive=args[++i];continue;}
-    if(a.charAt(0)==='-'){
-      for(var j=1;j<a.length;j++){
-        if(a[j]==='c')create=true;
-        else if(a[j]==='x')extract=true;
-        else if(a[j]==='t')list=true;
-      }
-    }else files.push(a);
+    if(a.startsWith('-')){for(const c of a.slice(1)){if(c==='c')create=true;else if(c==='x')extract=true;else if(c==='t')list=true;}}
+    else files.push(a);
   }
   if(!create&&!extract&&!list)return 'tar: You must specify one of -c, -x, -t';
   if(!archive)return 'tar: option -f requires an argument';
-  var archivePath=resolvePath(ctx.cwd,archive);
+  const archivePath=resolvePath(ctx.cwd,archive);
   if(create){
     if(!files.length)files.push('.');
-    var entries=[];
+    const entries=[];
     function add(path,name){
-      var n=getNode(path);
+      const n=getNode(path);
       if(!n)return;
       if(n.type==='file'){
         if(n.binary){
-          var bin=atob(n.content);
-          var arr=new Uint8Array(bin.length);
-          for(var i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);
+          const bin=atob(n.content);
+          const arr=new Uint8Array(bin.length);
+          for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);
           entries.push({name:name.replace(/^\//,''),content:arr});
         }else entries.push({name:name.replace(/^\//,''),content:n.content});
       }else if(n.type==='dir'){
-        for(var k in n.children)add(path+'/'+k,name+'/'+k);
+        for(const k of Object.keys(n.children))add(path+'/'+k,name+'/'+k);
       }
     }
-    for(var fi=0;fi<files.length;fi++){
-      var p=resolvePath(ctx.cwd,files[fi]);
-      add(p,files[fi].replace(/^\.\//,''));
-    }
-    var bytes=tarPack(entries);
-    var b64='';
-    for(var i=0;i<bytes.length;i+=0x8000)b64+=String.fromCharCode.apply(null,bytes.subarray(i,i+0x8000));
+    for(const f of files){const p=resolvePath(ctx.cwd,f);add(p,f.replace(/^\.\//,''));}
+    const bytes=tarPack(entries);
+    let b64='';
+    const chunk=0x8000;
+    for(let i=0;i<bytes.length;i+=chunk)b64+=String.fromCharCode.apply(null,bytes.subarray(i,i+chunk));
     b64=btoa(b64);
-    var gp=getParent(archivePath);
-    if(gp.parent)gp.parent.children[gp.name]=F(b64,{binary:true,mtime:Date.now()});
+    const {parent,name}=getParent(archivePath);
+    if(parent)parent.children[name]=F(b64,{binary:true,mtime:Date.now()});
     saveFS();
-    return entries.map(function(e){return e.name;}).join('\n')+'\n(created '+archive+', '+bytes.length+' bytes, '+entries.length+' entries)';
+    return entries.map(e=>e.name).join('\n')+`\n\x1b[90m(created ${archive}, ${bytes.length} bytes, ${entries.length} entries)\x1b[0m`;
   }
-  var an=getNode(archivePath);
-  if(!an)return 'tar: '+archive+': Cannot open: No such file or directory';
-  if(!an.binary)return 'tar: '+archive+': not a tar archive';
-  var bin=atob(an.content);
-  var arr=new Uint8Array(bin.length);
-  for(var i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);
-  var entries=tarUnpack(arr);
-  if(list)return entries.map(function(e){return e.name;}).join('\n');
+  const an=getNode(archivePath);
+  if(!an)return `tar: ${archive}: Cannot open: No such file or directory`;
+  if(!an.binary)return `tar: ${archive}: not a tar archive`;
+  const bin=atob(an.content);
+  const arr=new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);
+  const entries=tarUnpack(arr);
+  if(list)return entries.map(e=>e.name).join('\n');
   if(extract){
-    for(var ei=0;ei<entries.length;ei++){
-      var e=entries[ei];
-      var dest=resolvePath(ctx.cwd,e.name);
-      var isText=true;
-      for(var j=0;j<Math.min(e.content.length,512);j++){
-        var b=e.content[j];
-        if(b<9||(b>13&&b<32)){isText=false;break;}
-      }
+    for(const e of entries){
+      const dest=resolvePath(ctx.cwd,e.name);
+      const isText=!/[\x00-\x08\x0E-\x1F]/.test(Array.from(e.content.slice(0,512)).map(b=>String.fromCharCode(b)).join(''));
       if(isText)writeFile(dest,new TextDecoder().decode(e.content));
       else{
-        var b64='';
-        for(var j=0;j<e.content.length;j+=0x8000)b64+=String.fromCharCode.apply(null,e.content.subarray(j,j+0x8000));
+        let b64='';
+        for(let i=0;i<e.content.length;i+=0x8000)b64+=String.fromCharCode.apply(null,e.content.subarray(i,i+0x8000));
         b64=btoa(b64);
-        var gp=getParent(dest);
-        if(gp.parent)gp.parent.children[gp.name]=F(b64,{binary:true,mtime:Date.now()});
+        const {parent,name}=getParent(dest);
+        if(parent)parent.children[name]=F(b64,{binary:true,mtime:Date.now()});
       }
     }
     saveFS();
-    return entries.map(function(e){return e.name;}).join('\n');
+    return entries.map(e=>e.name).join('\n');
   }
   return '';
 });
 
-/* ══════════ System ══════════ */
-def('ps','system','process list','ps [aux]',function(args){
-  var full=args.join('').indexOf('a')>=0||args.join('').indexOf('x')>=0;
+/* ═══════════════════════════════════════════════════════════
+   SYSTEM
+   ═══════════════════════════════════════════════════════════ */
+def('ps','system','process list','ps [aux]',(args)=>{
+  const full=args.join('').includes('a')||args.join('').includes('x');
   if(full){
     return 'USER       PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND\n'
-      +['root',1,'0.0','0.1','168020','11204','?','Ss','09:13','0:01','/sbin/rinit'].map(function(r){return pad(r[0],11)+String(r[1]).padStart(5)+String(r[2]).padStart(5)+String(r[3]).padStart(5)+String(r[4]).padStart(7)+String(r[5]).padStart(6)+' '+pad(r[6],8)+pad(r[7],4)+pad(r[8],8)+pad(r[9],7)+r[10];}).join('\n')
-      +'\n'+['root',412,'0.3','0.6','402114','48120','?','Sl','09:13','0:00','rcompositor'].map(function(r){return pad(r[0],11)+String(r[1]).padStart(5)+String(r[2]).padStart(5)+String(r[3]).padStart(5)+String(r[4]).padStart(7)+String(r[5]).padStart(6)+' '+pad(r[6],8)+pad(r[7],4)+pad(r[8],8)+pad(r[9],7)+r[10];}).join('\n')
-      +'\n'+[state.user,1024,'0.1','0.2','22404','5120','tty1','Ss','09:14','0:00','-rsh'].map(function(r){return pad(r[0],11)+String(r[1]).padStart(5)+String(r[2]).padStart(5)+String(r[3]).padStart(5)+String(r[4]).padStart(7)+String(r[5]).padStart(6)+' '+pad(r[6],8)+pad(r[7],4)+pad(r[8],8)+pad(r[9],7)+r[10];}).join('\n');
+      +['root',1,'0.0','0.1','168020','11204','?','Ss','09:13','0:01','/sbin/rinit']
+        .map(r=>pad(r[0],11)+String(r[1]).padStart(5)+String(r[2]).padStart(5)+String(r[3]).padStart(5)+String(r[4]).padStart(7)+String(r[5]).padStart(6)+' '+pad(r[6],8)+pad(r[7],4)+pad(r[8],8)+pad(r[9],7)+r[10]).join('\n')
+      +'\n'+['root',412,'0.3','0.6','402114','48120','?','Sl','09:13','0:00','rcompositor'].map(r=>pad(r[0],11)+String(r[1]).padStart(5)+String(r[2]).padStart(5)+String(r[3]).padStart(5)+String(r[4]).padStart(7)+String(r[5]).padStart(6)+' '+pad(r[6],8)+pad(r[7],4)+pad(r[8],8)+pad(r[9],7)+r[10]).join('\n')
+      +'\n'+[state.user,1024,'0.1','0.2','22404','5120','tty1','Ss','09:14','0:00','-rsh'].map(r=>pad(r[0],11)+String(r[1]).padStart(5)+String(r[2]).padStart(5)+String(r[3]).padStart(5)+String(r[4]).padStart(7)+String(r[5]).padStart(6)+' '+pad(r[6],8)+pad(r[7],4)+pad(r[8],8)+pad(r[9],7)+r[10]).join('\n');
   }
   return '    PID TTY          TIME CMD\n    1 ?        00:00:01 rinit\n  412 ?        00:00:00 rcompositor\n 1024 tty1     00:00:00 rsh';
 });
-def('free','system','memory','free [-h]',function(args){
-  if(args.indexOf('-h')>=0)return '               total        used        free      shared  buff/cache   available\nMem:           15Gi       2.4Gi        13Gi       120Mi       1.0Gi        14Gi\nSwap:         2.0Gi          0B       2.0Gi';
+def('free','system','memory usage','free [-h]',(args)=>{
+  const h=args.includes('-h');
+  if(h)return '               total        used        free      shared  buff/cache   available\nMem:           15Gi       2.4Gi        13Gi       120Mi       1.0Gi        14Gi\nSwap:         2.0Gi          0B       2.0Gi';
   return '               total        used        free      shared  buff/cache   available\nMem:        16384000     2516992    13844480      122880     1052672    14890432\nSwap:        2097148           0     2097148';
 });
-def('top','system','process monitor','top',function(){
-  var s=Math.floor(performance.now()/1000);
+def('top','system','process monitor','top',()=>{
+  const s=Math.floor(performance.now()/1000);
   return [
-    'top - '+new Date().toTimeString().slice(0,8)+' up '+Math.floor(s/60)+' min,  1 user',
-    'Tasks:   4 total,   1 running,   3 sleeping',
-    '%Cpu(s):  8.3 us,  1.2 sy,  0.0 ni, 90.5 id',
-    'MiB Mem :  16000.0 total,  13517.6 free,   2457.6 used',
+    `top - ${new Date().toTimeString().slice(0,8)} up ${Math.floor(s/60)} min,  1 user,  load average: 0.08, 0.12, 0.09`,
+    'Tasks:   4 total,   1 running,   3 sleeping,   0 stopped,   0 zombie',
+    '%Cpu(s):  8.3 us,  1.2 sy,  0.0 ni, 90.5 id,  0.0 wa,  0.0 hi,  0.0 si,  0.0 st',
+    'MiB Mem :  16000.0 total,  13517.6 free,   2457.6 used,   1024.8 buff/cache',
+    'MiB Swap:   2048.0 total,   2048.0 free,      0.0 used.  13000.0 avail Mem',
     '',
     '    PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND',
     '   1024 '+pad(state.user,10)+'20   0   22404   5120   4096 S   0.3   0.0   0:00.21 rsh',
@@ -1805,12 +1730,12 @@ def('top','system','process monitor','top',function(){
     '      1 root      20   0  168020  11204   8192 S   0.0   0.1   0:01.02 rinit'
   ].join('\n');
 });
-def('mount','system','mounts','mount',function(){
-  var fstab=readFstab();
+def('mount','system','show mounted filesystems','mount',()=>{
+  const fstab=readFstab();
   if(!fstab)return '\x1b[31mmount: no /etc/fstab\x1b[0m';
-  return fstab.map(function(m){return m.device+' on '+m.mount+' type '+m.type+' ('+m.options+')';}).join('\n');
+  return fstab.map(m=>`${m.device} on ${m.mount} type ${m.type} (${m.options})`).join('\n');
 });
-def('lscpu','system','CPU info','lscpu',function(){
+def('lscpu','system','CPU info','lscpu',()=>{
   return [
     'Architecture:            x86_64',
     'CPU(s):                  '+(navigator.hardwareConcurrency||4),
@@ -1827,223 +1752,218 @@ def('lscpu','system','CPU info','lscpu',function(){
   ].join('\n');
 });
 
-/* ══════════ Net ══════════ */
+/* ═══════════════════════════════════════════════════════════
+   NET
+   ═══════════════════════════════════════════════════════════ */
 async function realFetch(url,opts){
   opts=opts||{};
-  var timeout=opts.timeout||15000;
-  var controller=new AbortController();
-  var timer=setTimeout(function(){controller.abort();},timeout);
-  var t0=performance.now();
+  const timeout=opts.timeout||15000;
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),timeout);
+  const t0=performance.now();
   try{
-    var res=await fetch(url,{signal:controller.signal,method:opts.method||'GET',headers:opts.headers||{},redirect:'follow',mode:'cors'});
+    const res=await fetch(url,{signal:controller.signal,method:opts.method||'GET',headers:opts.headers||{},redirect:'follow',mode:'cors'});
     clearTimeout(timer);
-    var dt=performance.now()-t0;
-    var headers={};
-    res.headers.forEach(function(v,k){headers[k]=v;});
-    var text=await res.text();
-    return {ok:true,status:res.status,statusText:res.statusText,headers:headers,text:text,time:dt,url:res.url};
+    const dt=performance.now()-t0;
+    const headers={};
+    res.headers.forEach((v,k)=>{headers[k]=v;});
+    const text=await res.text();
+    return {ok:true,status:res.status,statusText:res.statusText,headers,text,time:dt,url:res.url};
   }catch(e){
     clearTimeout(timer);
-    var dt=performance.now()-t0;
-    var msg=e&&e.message?e.message:String(e);
+    const dt=performance.now()-t0;
+    let msg=e&&e.message?e.message:String(e);
     if(e.name==='AbortError')msg='Operation timed out after '+timeout+'ms';
     return {ok:false,error:msg,time:dt,cors:/cors|failed to fetch/i.test(msg)};
   }
 }
 async function fetchWithFallback(url,opts){
-  var r=await realFetch(url,opts);
+  let r=await realFetch(url,opts);
   if(r.ok)return r;
   if(!r.cors)return r;
   try{
-    var prox='https://api.allorigins.win/raw?url='+encodeURIComponent(url);
-    var r2=await realFetch(prox,opts);
+    const prox='https://api.allorigins.win/raw?url='+encodeURIComponent(url);
+    const r2=await realFetch(prox,opts);
     if(r2.ok){r2.proxied=true;r2.proxyName='api.allorigins.win';return r2;}
   }catch(e){}
   try{
-    var prox='https://r.jina.ai/'+url;
-    var r3=await realFetch(prox,opts);
+    const prox='https://r.jina.ai/'+url;
+    const r3=await realFetch(prox,opts);
     if(r3.ok){r3.proxied=true;r3.proxyName='r.jina.ai';return r3;}
   }catch(e){}
   return r;
 }
-def('curl','net','transfer URL','curl [-sS] <url>',async function(args){
-  var url=null;
-  for(var i=0;i<args.length;i++)if(args[i].charAt(0)!=='-'){url=args[i];break;}
+def('curl','net','transfer a URL','curl [-sS] <url>',async(args)=>{
+  const url=args.find(a=>!a.startsWith('-'));
   if(!url)return "curl: try 'curl --help' for more information";
-  var silent=args.indexOf('-s')>=0;
-  var full=url.indexOf('http')===0?url:'https://'+url;
-  var r=await fetchWithFallback(full,{timeout:20000});
+  const silent=args.includes('-s');
+  const full=url.startsWith('http')?url:'https://'+url;
+  const r=await fetchWithFallback(full,{timeout:20000});
   if(!r.ok){
-    return 'curl: (7) Failed to connect: '+r.error+'\n(elapsed '+r.time.toFixed(0)+'ms)';
+    return `curl: (7) Failed to connect: ${r.error}\n\x1b[90m(elapsed ${r.time.toFixed(0)}ms)\x1b[0m`;
   }
-  var out='';
+  let out='';
   if(!silent){
-    out+='*   Trying '+new URL(r.url).hostname+'...\n';
-    out+='* Connected ('+r.time.toFixed(0)+'ms)\n';
-    out+='< HTTP/1.1 '+r.status+' '+r.statusText+'\n';
-    if(r.proxied)out+='* via CORS proxy: '+r.proxyName+'\n';
+    out+=`\x1b[90m*   Trying ${new URL(r.url).hostname}...\x1b[0m\n`;
+    out+=`\x1b[90m* Connected (${r.time.toFixed(0)}ms)\x1b[0m\n`;
+    out+=`\x1b[90m< HTTP/1.1 ${r.status} ${r.statusText}\x1b[0m\n`;
+    if(r.proxied)out+=`\x1b[90m* via CORS proxy: ${r.proxyName}\x1b[0m\n`;
     out+='\n';
   }
   out+=r.text;
   return out;
 });
-def('wget','net','retrieve files','wget <url>',async function(args,ctx){
-  var url=null;
-  for(var i=0;i<args.length;i++)if(args[i].charAt(0)!=='-'){url=args[i];break;}
+def('wget','net','retrieve files','wget <url>',async(args,ctx)=>{
+  const url=args.find(a=>!a.startsWith('-'));
   if(!url)return 'wget: missing URL';
-  var full=url.indexOf('http')===0?url:'https://'+url;
-  var r=await fetchWithFallback(full,{timeout:20000});
-  var name=(url.split('/').pop()||'index.html').split('?')[0];
+  const full=url.startsWith('http')?url:'https://'+url;
+  const r=await fetchWithFallback(full,{timeout:20000});
+  const name=(url.split('/').pop()||'index.html').split('?')[0];
   if(!r.ok){
-    return '--'+new Date().toISOString()+'--  '+full+'\nConnecting... failed: '+r.error;
+    return `--${new Date().toISOString()}--  ${full}\nConnecting... failed: ${r.error}`;
   }
-  var path=resolvePath(ctx.cwd,name);
+  const path=resolvePath(ctx.cwd,name);
   writeFile(path,r.text);
-  saveFS();
   return [
-    '--'+new Date().toISOString()+'--  '+full,
-    'Resolving... ok',
-    'Connecting... connected.',
-    'HTTP request sent, awaiting response... '+r.status+' '+r.statusText,
-    'Length: '+r.text.length+' [text/plain]',
-    "Saving to: '"+name+"'",
+    `--${new Date().toISOString()}--  ${full}`,
+    `Resolving... ok`,
+    `Connecting... connected.`,
+    `HTTP request sent, awaiting response... ${r.status} ${r.statusText}`,
+    `Length: ${r.text.length} [text/plain]`,
+    `Saving to: '${name}'`,
     '',
-    name+' 100%[===================>]   '+r.text.length+'B  in '+(r.time/1000).toFixed(2)+'s',
+    `${name} 100%[===================>]   ${r.text.length}B  in ${(r.time/1000).toFixed(2)}s`,
     '',
-    new Date().toISOString()+' ('+(r.text.length/(r.time/1000)/1024).toFixed(1)+' KB/s) - '+name+' saved'
+    `${new Date().toISOString()} (${(r.text.length/(r.time/1000)/1024).toFixed(1)} KB/s) - '${name}' saved [${r.text.length}/${r.text.length}]`
   ].join('\n');
 });
-def('ping','net','HTTP round-trip test','ping [-c N] <host>',async function(args){
-  var count=4;
-  var ci=args.indexOf('-c');
-  if(ci>=0){count=parseInt(args[ci+1],10)||4;args=args.filter(function(a,i){return i!==ci&&i!==ci+1;});}
-  var host=args[0]||'localhost';
-  var hostname=host.split('/')[0];
-  var url=host.indexOf('http')===0?host:'https://'+hostname;
-  var out=['PING '+hostname+' — HTTP round-trip test'];
-  var times=[];
-  var lost=0;
-  for(var i=0;i<Math.min(count,6);i++){
-    var r=await realFetch(url,{timeout:5000,method:'HEAD'});
+def('ping','net','HTTP round-trip test','ping [-c N] <host>',async(args)=>{
+  let count=4;
+  const ci=args.indexOf('-c');
+  if(ci>=0){count=parseInt(args[ci+1],10)||4;args=args.filter((a,i)=>i!==ci&&i!==ci+1);}
+  const host=args[0]||'localhost';
+  const hostname=host.split('/')[0];
+  const url=host.startsWith('http')?host:'https://'+hostname;
+  const out=[`PING ${hostname} — HTTP round-trip test`];
+  const times=[];
+  let lost=0;
+  for(let i=0;i<Math.min(count,6);i++){
+    const r=await realFetch(url,{timeout:5000,method:'HEAD'});
     if(r.ok){
       times.push(r.time);
-      out.push('seq='+(i+1)+' time='+r.time.toFixed(1)+' ms  status='+r.status);
+      out.push(`seq=${i+1} time=${r.time.toFixed(1)} ms  status=${r.status}`);
     }else{
       lost++;
-      out.push('seq='+(i+1)+' \x1b[31mtimeout\x1b[0m');
+      out.push(`seq=${i+1} \x1b[31mtimeout\x1b[0m`);
     }
   }
   out.push('');
-  out.push('--- '+hostname+' statistics ---');
-  out.push(Math.min(count,6)+' transmitted, '+times.length+' received, '+(lost/Math.min(count,6)*100).toFixed(0)+'% packet loss');
-  if(times.length)out.push('rtt min/avg/max = '+Math.min.apply(null,times).toFixed(1)+'/'+(times.reduce(function(a,b){return a+b;},0)/times.length).toFixed(1)+'/'+Math.max.apply(null,times).toFixed(1)+' ms');
+  out.push(`--- ${hostname} statistics ---`);
+  const recv=times.length;
+  out.push(`${Math.min(count,6)} transmitted, ${recv} received, ${(lost/Math.min(count,6)*100).toFixed(0)}% packet loss`);
+  if(times.length){
+    out.push(`rtt min/avg/max = ${Math.min(...times).toFixed(1)}/${(times.reduce((a,b)=>a+b,0)/times.length).toFixed(1)}/${Math.max(...times).toFixed(1)} ms`);
+  }
   return out.join('\n');
 });
-def('dig','net','DNS lookup','dig <name> [type]',async function(args){
-  var name=args[0];
+def('dig','net','DNS lookup (DNS-over-HTTPS)','dig <name> [type]',async(args)=>{
+  const name=args[0];
   if(!name)return 'dig: missing name';
-  var type=args[1]||'A';
-  var url='https://dns.google/resolve?name='+encodeURIComponent(name)+'&type='+encodeURIComponent(type);
-  var r=await realFetch(url);
-  if(!r.ok)return 'dig: '+r.error;
+  const type=args[1]||'A';
+  const url='https://dns.google/resolve?name='+encodeURIComponent(name)+'&type='+encodeURIComponent(type);
+  const r=await realFetch(url);
+  if(!r.ok)return `dig: ${r.error}`;
   try{
-    var data=JSON.parse(r.text);
-    var out='';
-    out+='; <<>> RenderedDiG <<>> '+name+' '+type+'\n';
+    const data=JSON.parse(r.text);
+    let out='';
+    out+=`; <<>> RenderedDiG <<>> ${name} ${type}\n`;
     out+=';; Got answer:\n';
-    out+=';; ->>HEADER<<- opcode: QUERY, status: '+(data.Status===0?'NOERROR':'NXDOMAIN')+', id: '+Math.floor(Math.random()*65535)+'\n';
-    out+=';; flags: qr rd ra; QUERY: 1, ANSWER: '+((data.Answer||[]).length)+'\n\n';
-    out+=';; QUESTION SECTION:\n;'+name+'.\t\tIN\t'+type+'\n\n';
+    out+=`;; ->>HEADER<<- opcode: QUERY, status: ${data.Status===0?'NOERROR':'NXDOMAIN'}, id: ${Math.floor(Math.random()*65535)}\n`;
+    out+=`;; flags: qr rd ra; QUERY: 1, ANSWER: ${(data.Answer||[]).length}\n\n`;
+    out+=`;; QUESTION SECTION:\n;${name}.\t\tIN\t${type}\n\n`;
     if(data.Answer&&data.Answer.length){
       out+=';; ANSWER SECTION:\n';
-      for(var i=0;i<data.Answer.length;i++){
-        var a=data.Answer[i];
-        var t=a.type===1?'A':a.type===5?'CNAME':a.type===28?'AAAA':a.type;
-        out+=a.name+'.\t'+a.TTL+'\tIN\t'+t+'  '+a.data+'\n';
+      for(const a of data.Answer){
+        out+=`${a.name}.\t${a.TTL}\tIN\t${a.type===1?'A':a.type===5?'CNAME':a.type===28?'AAAA':a.type}  ${a.data}\n`;
       }
       out+='\n';
     }
-    out+=';; Query time: '+r.time.toFixed(0)+' msec\n';
+    out+=`;; Query time: ${r.time.toFixed(0)} msec\n`;
     out+=';; SERVER: dns.google#443 (DNS-over-HTTPS)';
     return out;
-  }catch(e){return 'dig: parse error';}
+  }catch(e){return `dig: parse error`;}
 });
-def('nslookup','net','DNS lookup','nslookup <name>',async function(args){
-  var name=args[0];
+def('nslookup','net','DNS lookup','nslookup <name>',async(args)=>{
+  const name=args[0];
   if(!name)return 'nslookup: missing name';
-  var r=await realFetch('https://dns.google/resolve?name='+encodeURIComponent(name)+'&type=A');
-  if(!r.ok)return 'nslookup: '+r.error;
+  const r=await realFetch('https://dns.google/resolve?name='+encodeURIComponent(name)+'&type=A');
+  if(!r.ok)return `nslookup: ${r.error}`;
   try{
-    var data=JSON.parse(r.text);
-    var out='Server:\t\tdns.google\nAddress:\t8.8.8.8#53\n\n';
-    out+='Non-authoritative answer:\nName:\t'+name+'\n';
-    for(var i=0;i<(data.Answer||[]).length;i++){
-      var a=data.Answer[i];
-      if(a.type===1)out+='Address: '+a.data+'\n';
-      else if(a.type===5)out+='Canonical name: '+a.data+'\n';
+    const data=JSON.parse(r.text);
+    let out=`Server:\t\tdns.google\nAddress:\t8.8.8.8#53\n\n`;
+    out+=`Non-authoritative answer:\nName:\t${name}\n`;
+    for(const a of (data.Answer||[])){
+      if(a.type===1)out+=`Address: ${a.data}\n`;
+      else if(a.type===5)out+=`Canonical name: ${a.data}\n`;
     }
     return out;
   }catch(e){return 'nslookup: parse error';}
 });
-def('host','net','DNS lookup','host <name>',async function(args){
-  var name=args[0];
+def('host','net','DNS lookup','host <name>',async(args)=>{
+  const name=args[0];
   if(!name)return 'host: missing name';
-  var r=await realFetch('https://dns.google/resolve?name='+encodeURIComponent(name)+'&type=A');
-  if(!r.ok)return 'host: '+r.error;
+  const r=await realFetch('https://dns.google/resolve?name='+encodeURIComponent(name)+'&type=A');
+  if(!r.ok)return `host: ${r.error}`;
   try{
-    var data=JSON.parse(r.text);
-    var lines=[];
-    for(var i=0;i<(data.Answer||[]).length;i++){
-      var a=data.Answer[i];
-      if(a.type===1)lines.push(name+' has address '+a.data);
-      if(a.type===5)lines.push(name+' is an alias for '+a.data);
+    const data=JSON.parse(r.text);
+    const lines=[];
+    for(const a of (data.Answer||[])){
+      if(a.type===1)lines.push(`${name} has address ${a.data}`);
+      if(a.type===5)lines.push(`${name} is an alias for ${a.data}`);
     }
-    return lines.join('\n')||name+' has no A records';
+    return lines.join('\n')||`${name} has no A records`;
   }catch(e){return 'host: parse error';}
 });
-def('ifconfig','net','network interfaces','ifconfig',async function(){
-  var pub='(fetching)';
-  var r=await realFetch('https://api.ipify.org?format=json');
+def('ifconfig','net','network interfaces','ifconfig',async()=>{
+  let pub='(fetching)';
+  const r=await realFetch('https://api.ipify.org?format=json');
   if(r.ok){try{pub=JSON.parse(r.text).ip;}catch(e){}}
-  var conn=navigator.connection||{};
-  var out=[
+  const conn=navigator.connection||{};
+  return [
     'eth0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500',
-    '        inet '+pub+'  netmask 255.255.255.0  broadcast 255.255.255.255',
-    '        inet6 fe80::'+Array.from({length:4},function(){return Math.random().toString(16).slice(2,6);}).join(':')+'  prefixlen 64  scopeid 0x20<link>',
-    '        ether '+Array.from({length:6},function(){return Math.floor(Math.random()*256).toString(16).padStart(2,'0');}).join(':')+'  txqueuelen 1000  (Ethernet)',
-    '        RX packets '+Math.floor(Math.random()*10000)+'  bytes '+Math.floor(Math.random()*1e7),
-    '        TX packets '+Math.floor(Math.random()*10000)+'  bytes '+Math.floor(Math.random()*1e7)
-  ];
-  if(conn.effectiveType)out.push('        connection: '+conn.effectiveType+', downlink '+(conn.downlink||'?')+' Mbps, rtt '+(conn.rtt||'?')+'ms');
-  out.push('');
-  out.push('lo: flags=73<UP,LOOPBACK,RUNNING>  mtu 65536');
-  out.push('        inet 127.0.0.1  netmask 255.0.0.0');
-  out.push('        loop  txqueuelen 1000  (Local Loopback)');
-  return out.join('\n');
+    `        inet ${pub}  netmask 255.255.255.0  broadcast 255.255.255.255`,
+    `        inet6 fe80::${Array.from({length:4},()=>Math.random().toString(16).slice(2,6)).join(':')}  prefixlen 64  scopeid 0x20<link>`,
+    `        ether ${Array.from({length:6},()=>Math.floor(Math.random()*256).toString(16).padStart(2,'0')).join(':')}  txqueuelen 1000  (Ethernet)`,
+    `        RX packets ${Math.floor(Math.random()*10000)}  bytes ${Math.floor(Math.random()*1e7)}`,
+    `        TX packets ${Math.floor(Math.random()*10000)}  bytes ${Math.floor(Math.random()*1e7)}`,
+    conn.effectiveType?`        connection: ${conn.effectiveType}, downlink ${conn.downlink||'?'} Mbps, rtt ${conn.rtt||'?'}ms`:'',
+    '',
+    'lo: flags=73<UP,LOOPBACK,RUNNING>  mtu 65536',
+    '        inet 127.0.0.1  netmask 255.0.0.0',
+    '        loop  txqueuelen 1000  (Local Loopback)'
+  ].filter(Boolean).join('\n');
 });
-def('ip','net','routing','ip [addr|route]',function(args){
-  var sub=args[0]||'addr';
-  if(sub==='addr'||sub==='a')return '1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536\n    inet 127.0.0.1/8 scope host lo\n2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500\n    (use ifconfig for real address)';
+def('ip','net','show / manipulate routing','ip [addr|link|route]',(args)=>{
+  const sub=args[0]||'addr';
+  if(sub==='addr'||sub==='a')return '1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536\n    inet 127.0.0.1/8 scope host lo\n2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500\n    (use `ifconfig` for real address)';
   if(sub==='route'||sub==='r')return 'default via 10.0.2.2 dev eth0';
   return 'ip: usage: ip [addr|link|route]';
 });
-def('netstat','net','connections','netstat',function(){return 'Active Internet connections (only servers)\nProto Recv-Q Send-Q Local Address           Foreign Address         State\ntcp        0      0 0.0.0.0:22              0.0.0.0:*               LISTEN';});
-def('ss','net','socket stats','ss',function(){return CMDS.netstat.fn([],{});});
-def('ssh','net','SSH (simulated)','ssh <host>',function(args){
-  return '\x1b[31mssh: connect to host '+(args[0]||'localhost').split('@').pop()+' port 22: Connection refused\x1b[0m\n\x1b[90m(a browser cannot open raw TCP sockets)\x1b[0m';
-});
-def('nc','net','netcat (simulated)','nc <host> <port>',function(){return '\x1b[31mnc: connect: Connection refused\x1b[0m\n\x1b[90m(a browser cannot open raw TCP sockets)\x1b[0m';});
-def('nmap','net','port scan','nmap <host>',async function(args){
-  var host=args[0]||'localhost';
-  var ports=[22,80,443,8080,3000];
-  var out=['Starting RenderedNmap at '+new Date().toISOString()];
-  out.push('Nmap scan report for '+host);
+def('netstat','net','network connections','netstat',()=>'Active Internet connections (only servers)\nProto Recv-Q Send-Q Local Address           Foreign Address         State\ntcp        0      0 0.0.0.0:22              0.0.0.0:*               LISTEN');
+def('ss','net','socket stats','ss',()=>CMDS.netstat.fn([],{}));
+def('ssh','net','SSH client (simulated)','ssh [user@]host',(args)=>`\x1b[31mssh: connect to host ${(args[0]||'localhost').split('@').pop()} port 22: Connection refused\x1b[0m\n\x1b[90m(a browser cannot open raw TCP sockets)\x1b[0m`);
+def('nc','net','netcat (simulated)','nc <host> <port>',()=>'\x1b[31mnc: connect: Connection refused\x1b[0m\n\x1b[90m(a browser cannot open raw TCP sockets)\x1b[0m');
+def('telnet','net','telnet (simulated)','telnet <host>',()=>'\x1b[31mtelnet: Unable to connect: Connection refused\x1b[0m\n\x1b[90m(a browser cannot open raw TCP sockets)\x1b[0m');
+def('nmap','net','port scan (HTTP probe)','nmap <host>',async(args)=>{
+  const host=args[0]||'localhost';
+  const ports=[22,80,443,8080,3000];
+  const out=[`Starting RenderedNmap at ${new Date().toISOString()}`];
+  out.push(`Nmap scan report for ${host}`);
   out.push('PORT     STATE    SERVICE');
-  for(var i=0;i<ports.length;i++){
-    var port=ports[i];
-    var url='https://'+host+':'+port;
-    var r=await realFetch(url,{timeout:3000,method:'HEAD'});
-    var state;
+  for(const port of ports){
+    const url=`https://${host}:${port}`;
+    const r=await realFetch(url,{timeout:3000,method:'HEAD'});
+    let state;
     if(r.ok)state='\x1b[32mopen\x1b[0m';
     else if(r.cors)state='\x1b[33mfiltered\x1b[0m';
     else if(/refused/i.test(r.error))state='\x1b[31mclosed\x1b[0m';
@@ -2052,51 +1972,49 @@ def('nmap','net','port scan','nmap <host>',async function(args){
   }
   return out.join('\n');
 });
-def('weather','net','weather (open-meteo)','weather <city>',async function(args){
-  var city=args.join(' ');
+/* NOTE: duplicate curl definition removed — the real one above is the only one. */
+def('weather','net','weather report (open-meteo)','weather <city>',async(args)=>{
+  const city=args.join(' ');
   if(!city)return 'weather: missing city';
-  var g=await realFetch('https://geocoding-api.open-meteo.com/v1/search?name='+encodeURIComponent(city)+'&count=1');
-  if(!g.ok)return 'weather: '+g.error;
-  var geo;
+  const g=await realFetch('https://geocoding-api.open-meteo.com/v1/search?name='+encodeURIComponent(city)+'&count=1');
+  if(!g.ok)return `weather: ${g.error}`;
+  let geo;
   try{geo=JSON.parse(g.text);}catch(e){return 'weather: parse error';}
-  if(!geo.results||!geo.results.length)return "weather: no results for '"+city+"'";
-  var res=geo.results[0];
-  var w=await realFetch('https://api.open-meteo.com/v1/forecast?latitude='+res.latitude+'&longitude='+res.longitude+'&current_weather=true');
-  if(!w.ok)return 'weather: '+w.error;
-  var data;
+  if(!geo.results||!geo.results.length)return `weather: no results for '${city}'`;
+  const {latitude,longitude,name,country}=geo.results[0];
+  const w=await realFetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true`);
+  if(!w.ok)return `weather: ${w.error}`;
+  let data;
   try{data=JSON.parse(w.text);}catch(e){return 'weather: parse error';}
-  var cw=data.current_weather;
-  function code(c){
-    var m={0:'Clear sky',1:'Mainly clear',2:'Partly cloudy',3:'Overcast',45:'Fog',48:'Rime fog',51:'Light drizzle',53:'Moderate drizzle',55:'Dense drizzle',61:'Slight rain',63:'Moderate rain',65:'Heavy rain',71:'Slight snow',73:'Moderate snow',75:'Heavy snow',95:'Thunderstorm'};
-    return m[c]||'code '+c;
-  }
+  const cw=data.current_weather;
   return [
-    '\x1b[1m'+res.name+', '+res.country+'\x1b[0m',
-    '  coordinates: '+res.latitude.toFixed(4)+', '+res.longitude.toFixed(4),
-    '  temperature: '+cw.temperature+'°C',
-    '  windspeed:   '+cw.windspeed+' km/h',
-    '  winddir:     '+cw.winddirection+'°',
-    '  conditions:  '+code(cw.weathercode)
+    `\x1b[1m${name}, ${country}\x1b[0m`,
+    `  coordinates: ${latitude.toFixed(4)}, ${longitude.toFixed(4)}`,
+    `  temperature: ${cw.temperature}°C`,
+    `  windspeed:   ${cw.windspeed} km/h`,
+    `  winddir:     ${cw.winddirection}°`,
+    `  conditions:  ${weatherCode(cw.weathercode)}`
   ].join('\n');
 });
-def('define','net','dictionary lookup','define <word>',async function(args){
-  var word=args[0];
+function weatherCode(c){
+  const m={0:'Clear sky',1:'Mainly clear',2:'Partly cloudy',3:'Overcast',45:'Fog',48:'Depositing rime fog',51:'Light drizzle',53:'Moderate drizzle',55:'Dense drizzle',61:'Slight rain',63:'Moderate rain',65:'Heavy rain',71:'Slight snow',73:'Moderate snow',75:'Heavy snow',95:'Thunderstorm'};
+  return m[c]||'code '+c;
+}
+def('define','net','dictionary lookup','define <word>',async(args)=>{
+  const word=args[0];
   if(!word)return 'define: missing word';
-  var r=await realFetch('https://api.dictionaryapi.dev/api/v2/entries/en/'+encodeURIComponent(word));
-  if(!r.ok)return "define: no definition found for '"+word+"'";
+  const r=await realFetch('https://api.dictionaryapi.dev/api/v2/entries/en/'+encodeURIComponent(word));
+  if(!r.ok)return `define: no definition found for '${word}'`;
   try{
-    var data=JSON.parse(r.text);
-    var out=[];
-    for(var i=0;i<Math.min(data.length,2);i++){
-      var entry=data[i];
-      out.push('\x1b[1m'+entry.word+'\x1b[0m'+(entry.phonetic?' \x1b[90m'+entry.phonetic+'\x1b[0m':''));
-      for(var j=0;j<Math.min(entry.meanings.length,3);j++){
-        var m=entry.meanings[j];
-        out.push('  \x1b[33m'+m.partOfSpeech+'\x1b[0m');
-        for(var k=0;k<Math.min(m.definitions.length,2);k++){
-          var d=m.definitions[k];
-          out.push('    · '+d.definition);
-          if(d.example)out.push('      \x1b[90m"'+d.example+'"\x1b[0m');
+    const data=JSON.parse(r.text);
+    const out=[];
+    for(const entry of data.slice(0,2)){
+      out.push(`\x1b[1m${entry.word}\x1b[0m${entry.phonetic?' \x1b[90m'+entry.phonetic+'\x1b[0m':''}`);
+      for(const m of entry.meanings.slice(0,3)){
+        out.push(`  \x1b[33m${m.partOfSpeech}\x1b[0m`);
+        for(const d of m.definitions.slice(0,2)){
+          out.push(`    · ${d.definition}`);
+          if(d.example)out.push(`      \x1b[90m"${d.example}"\x1b[0m`);
         }
       }
       out.push('');
@@ -2105,12 +2023,14 @@ def('define','net','dictionary lookup','define <word>',async function(args){
   }catch(e){return 'define: parse error';}
 });
 
-/* ══════════ Dev ══════════ */
+/* ═══════════════════════════════════════════════════════════
+   DEV
+   ═══════════════════════════════════════════════════════════ */
 function evalJS(code,ctx,filename,extraArgs){
-  var lines=[];
-  var argv=filename?['node',filename].concat(extraArgs||[]):['node'].concat(extraArgs||[]);
+  const lines=[];
+  const argv=filename?['node',filename,...(extraArgs||[])]:['node',...(extraArgs||[])];
   function fmtArgs(a){
-    return a.map(function(x){
+    return a.map(x=>{
       if(x===undefined)return 'undefined';
       if(x===null)return 'null';
       if(typeof x==='string')return x;
@@ -2118,155 +2038,310 @@ function evalJS(code,ctx,filename,extraArgs){
       return String(x);
     }).join(' ');
   }
-  var fakeConsole={
-    log:function(){lines.push(fmtArgs(Array.prototype.slice.call(arguments)));},
-    error:function(){lines.push('\x1b[31m'+fmtArgs(Array.prototype.slice.call(arguments))+'\x1b[0m');},
-    warn:function(){lines.push('\x1b[33m'+fmtArgs(Array.prototype.slice.call(arguments))+'\x1b[0m');},
-    info:function(){lines.push(fmtArgs(Array.prototype.slice.call(arguments)));},
-    debug:function(){},trace:function(){}
+  const fakeConsole={
+    log:(...a)=>lines.push(fmtArgs(a)),
+    error:(...a)=>lines.push('\x1b[31m'+fmtArgs(a)+'\x1b[0m'),
+    warn:(...a)=>lines.push('\x1b[33m'+fmtArgs(a)+'\x1b[0m'),
+    info:(...a)=>lines.push(fmtArgs(a)),
+    debug:()=>{},trace:()=>{}
   };
-  var fakeProcess={
-    argv:argv,env:state.env,cwd:function(){return ctx.cwd;},
-    exit:function(c){throw {__exit:true,code:c||0};},
+  const fakeProcess={
+    argv,env:state.env,cwd:()=>ctx.cwd,
+    exit:(c)=>{throw{__exit:true,code:c||0};},
     platform:'renderedos',version:'v22.4.1',
     versions:{node:'22.4.1',v8:'12.4.254.21'},
-    stdout:{write:function(s){var t=String(s);lines.push(t.endsWith('\n')?t.slice(0,-1):t);}},
-    stderr:{write:function(s){var t=String(s);lines.push('\x1b[31m'+(t.endsWith('\n')?t.slice(0,-1):t)+'\x1b[0m');}},
-    nextTick:function(fn){setTimeout(fn,0);}
+    stdout:{write:s=>{const t=String(s);lines.push(t.endsWith('\n')?t.slice(0,-1):t);}},
+    stderr:{write:s=>{const t=String(s);lines.push('\x1b[31m'+(t.endsWith('\n')?t.slice(0,-1):t)+'\x1b[0m');}},
+    nextTick:(fn)=>setTimeout(fn,0)
   };
-  function fakeRequire(name){
+  const fakeRequire=(name)=>{
     if(name==='fs')return{
-      readFileSync:function(p){var n=getNode(resolvePath(ctx.cwd,p));return n&&n.type==='file'?n.content:'';},
-      writeFileSync:function(p,c){writeFile(resolvePath(ctx.cwd,p),String(c));},
-      existsSync:function(p){return !!getNode(resolvePath(ctx.cwd,p));},
-      readdirSync:function(p){var n=getNode(resolvePath(ctx.cwd,p));return n&&n.type==='dir'?Object.keys(n.children):[];},
-      statSync:function(p){var n=getNode(resolvePath(ctx.cwd,p));return n?{isDirectory:function(){return n.type==='dir';},isFile:function(){return n.type==='file';},size:sizeOf(n),mtime:new Date(n.mtime)}:null;}
+      readFileSync:(p)=>{const n=getNode(resolvePath(ctx.cwd,p));return n&&n.type==='file'?n.content:'';},
+      writeFileSync:(p,c)=>writeFile(resolvePath(ctx.cwd,p),String(c)),
+      existsSync:(p)=>!!getNode(resolvePath(ctx.cwd,p)),
+      readdirSync:(p)=>{const n=getNode(resolvePath(ctx.cwd,p));return n&&n.type==='dir'?Object.keys(n.children):[];},
+      statSync:(p)=>{const n=getNode(resolvePath(ctx.cwd,p));return n?{isDirectory:()=>n.type==='dir',isFile:()=>n.type==='file',size:sizeOf(n),mtime:new Date(n.mtime)}:null;}
     };
     if(name==='path')return{
-      join:function(){return Array.prototype.join.call(arguments,'/').replace(/\/+/g,'/');},
-      basename:function(p){return String(p).split('/').pop();},
-      dirname:function(p){return String(p).split('/').slice(0,-1).join('/')||'.';},
-      resolve:function(){return resolvePath(ctx.cwd,Array.prototype.join.call(arguments,'/'));}
+      join:(...a)=>a.join('/').replace(/\/+/g,'/'),
+      basename:(p)=>String(p).split('/').pop(),
+      dirname:(p)=>String(p).split('/').slice(0,-1).join('/')||'.',
+      resolve:(...a)=>resolvePath(ctx.cwd,a.join('/'))
     };
     if(name==='os')return{
-      hostname:function(){return state.host;},
-      platform:function(){return 'renderedos';},
-      cpus:function(){return [{model:'Rendered Virtual Core',speed:3600}];},
-      totalmem:function(){return 16384*1024*1024;},
-      freemem:function(){return 13842*1024*1024;},
-      uptime:function(){return Math.floor(performance.now()/1000);}
+      hostname:()=>state.host,platform:()=>'renderedos',
+      cpus:()=>[{model:'Rendered Virtual Core',speed:3600}],
+      totalmem:()=>16384*1024*1024,
+      freemem:()=>13842*1024*1024,
+      uptime:()=>Math.floor(performance.now()/1000)
     };
     if(name==='process')return fakeProcess;
     return {};
-  }
+  };
   try{
-    var fn=new Function('console','process','require','module','exports','__filename','__dirname','"use strict";\n'+code);
-    var moduleObj={exports:{}};
+    const fn=new Function('console','process','require','module','exports','__filename','__dirname','"use strict";\n'+code);
+    const moduleObj={exports:{}};
     fn(fakeConsole,fakeProcess,fakeRequire,moduleObj,moduleObj.exports,filename||'[eval]',ctx.cwd);
     return lines.join('\n');
   }catch(e){
     if(e&&e.__exit)return lines.join('\n');
-    var msg=e&&e.message?e.message:String(e);
-    var stack=(e&&e.stack?e.stack:'').split('\n').filter(function(l){return l.indexOf('at new Function')<0&&l.indexOf('at evalJS')<0;}).slice(0,4).join('\n');
-    return lines.join('\n')+(lines.length?'\n':'')+'\x1b[31m'+msg+'\x1b[0m\n\x1b[90m'+(stack||'    at '+(filename||'[eval]'))+'\x1b[0m';
+    const msg=e&&e.message?e.message:String(e);
+    const stack=(e&&e.stack?e.stack:'').split('\n').filter(l=>!l.includes('at new Function')&&!l.includes('at evalJS')).slice(0,4).join('\n');
+    return lines.join('\n')+(lines.length?'\n':'')+`\x1b[31m${msg}\x1b[0m\n\x1b[90m${stack||'    at '+(filename||'[eval]')}\x1b[0m`;
   }
 }
-def('node','dev','Node.js runtime (real evaluation)','node [file] [-e "code"] [args]',async function(args,ctx){
+def('node','dev','Node.js runtime (real evaluation)','node [file] [-e "code"] [args]',async(args,ctx)=>{
   if(args[0]==='--version'||args[0]==='-v')return 'v22.4.1';
   if(args[0]==='-e'){
-    var code=args.slice(1).join(' ');
+    const code=args.slice(1).join(' ');
     if(!code)return 'node: -e requires an argument';
     return evalJS(code,ctx,null,[]);
   }
-  var file=args[0];
-  if(!file)return 'Welcome to Node.js v22.4.1.\n\x1b[90m> \x1b[0m\x1b[90m(try: node -e "console.log(1+1)")\x1b[0m';
-  var n=getNode(resolvePath(ctx.cwd,file));
-  if(!n||n.type!=='file')return "node: Cannot find module '"+file+"'";
+  const file=args[0];
+  if(!file)return `Welcome to Node.js v22.4.1.\n\x1b[90m> \x1b[0m\x1b[90m(try: node -e "console.log(1+1)")\x1b[0m`;
+  const n=getNode(resolvePath(ctx.cwd,file));
+  if(!n||n.type!=='file')return `node: Cannot find module '${file}'`;
   return evalJS(n.content,ctx,file,args.slice(1));
 });
-def('git','dev','version control','git <command>',function(args,ctx){
-  var sub=args[0];
-  if(sub==='status')return 'On branch main\nnothing to commit, working tree clean';
-  if(sub==='log')return '\x1b[33mcommit 8f3a1c2\x1b[0m (HEAD -> main)\nAuthor: '+state.user+'\nDate:   '+new Date().toISOString()+'\n\n    initial commit';
+def('python','dev','Python interpreter (real eval)','python [-c "code"] [file]',async(args,ctx)=>{
+  if(args[0]==='--version')return 'Python 3.12.3';
+  if(args[0]==='-c'){
+    const code=args.slice(1).join(' ');
+    if(!code)return 'python: -c requires an argument';
+    return evalPython(code);
+  }
+  const file=args[0];
+  if(!file)return 'Python 3.12.3\n\x1b[90m(repl not available — try: python -c "print(1+1)")\x1b[0m';
+  const n=getNode(resolvePath(ctx.cwd,file));
+  if(!n)return `python: can't open file '${file}'`;
+  return evalPython(n.content);
+});
+function evalPython(code){
+  const lines=[];
+  const fakePrint=(...a)=>lines.push(a.map(x=>{
+    if(x===undefined)return 'None';
+    if(x===null)return 'None';
+    if(typeof x==='string')return x;
+    if(typeof x==='object'){try{return JSON.stringify(x);}catch(e){return String(x);}}
+    return String(x);
+  }).join(' '));
+  try{
+    let js=code;
+    js=js.replace(/print\s*\(/g,'__print(');
+    js=js.replace(/\bTrue\b/g,'true').replace(/\bFalse\b/g,'false').replace(/\bNone\b/g,'null');
+    js=js.replace(/#[^\n]*/g,'');
+    js=js.replace(/def\s+(\w+)\s*\(([^)]*)\)\s*:/g,'function $1($2) {');
+    const fn=new Function('__print','"use strict";\n'+js);
+    fn(fakePrint);
+    return lines.join('\n');
+  }catch(e){return `\x1b[31m${e.message}\x1b[0m`;}
+}
+def('git','dev','version control','git <command>',(args,ctx)=>{
+  const sub=args[0];
+  if(sub==='status')return "On branch main\nnothing to commit, working tree clean";
+  if(sub==='log')return `\x1b[33mcommit 8f3a1c2\x1b[0m (HEAD -> main)\nAuthor: ${state.user}\nDate:   ${new Date().toISOString()}\n\n    initial commit`;
   if(sub==='branch')return '* \x1b[32mmain\x1b[0m';
-  if(sub==='init')return 'Initialized empty Git repository in '+ctx.cwd+'/.git/';
-  if(sub==='commit')return '[main 8f3a1c2] commit\n 1 file changed';
+  if(sub==='init')return `Initialized empty Git repository in ${ctx.cwd}/.git/`;
+  if(sub==='commit')return `[main 8f3a1c2] ${args.slice(2).join(' ').replace(/^["']|["']$/g,'')||'commit'}\n 1 file changed`;
   if(sub==='push')return 'Everything up-to-date';
   if(sub==='pull')return 'Already up to date.';
   return 'usage: git <command>';
 });
-def('make','dev','build utility','make [target]',function(args,ctx){
-  var mk=getNode(resolvePath(ctx.cwd,'Makefile'));
+def('make','dev','build utility','make [target]',(args,ctx)=>{
+  const mk=getNode(resolvePath(ctx.cwd,'Makefile'));
   if(!mk)return 'make: *** No targets specified and no makefile found.  Stop.';
-  var target=args[0]||'all';
-  var m=mk.content.match(new RegExp('^'+target+':([\\s\\S]*?)(?=\\n\\S|$)','m'));
-  if(!m)return "make: *** No rule to make target '"+target+"'.  Stop.";
-  var cmds=m[1].split('\n').filter(function(l){return l.charAt(0)==='\t';}).map(function(l){return l.slice(1);});
-  return "make: '"+target+"' is up to date.\n"+cmds.map(function(c){return c.replace(/^@/,'');}).join('\n');
+  const target=args[0]||'all';
+  const m=mk.content.match(new RegExp('^'+target+':([\\s\\S]*?)(?=\\n\\S|$)','m'));
+  if(!m)return `make: *** No rule to make target '${target}'.  Stop.`;
+  const cmds=m[1].split('\n').filter(l=>l.startsWith('\t')).map(l=>l.slice(1));
+  return `make: '${target}' is up to date.\n`+cmds.map(c=>c.replace(/^@/,'')).join('\n');
 });
-def('npm','dev','Node package manager','npm <command>',async function(args){
+def('gcc','dev','C compiler (stub)','gcc <file>',()=>'gcc: fatal error: no input files');
+def('npm','dev','Node package manager','npm <command>',async(args)=>{
   if(args[0]==='info'){
-    var pkg=args[1];
+    const pkg=args[1];
     if(!pkg)return 'npm: missing package name';
-    var r=await realFetch('https://registry.npmjs.org/'+encodeURIComponent(pkg));
-    if(!r.ok)return 'npm: '+r.error;
+    const r=await realFetch('https://registry.npmjs.org/'+encodeURIComponent(pkg));
+    if(!r.ok)return `npm: ${r.error}`;
     try{
-      var d=JSON.parse(r.text);
-      var v=d['dist-tags']&&d['dist-tags'].latest;
-      return '\n'+d.name+'@'+v+' | '+(d.license||'?')+'\n'+(d.description||'');
+      const d=JSON.parse(r.text);
+      const v=d['dist-tags']&&d['dist-tags'].latest;
+      return `\n${d.name}@${v} | ${d.license||'?'} | deps: ${Object.keys(d.versions[v].dependencies||{}).length}\n${d.description||''}\n\nhomepage: ${d.homepage||'—'}\nrepository: ${(d.repository&&d.repository.url)||'—'}`;
     }catch(e){return 'npm: parse error';}
   }
   if(args[0]==='install'||args[0]==='i')return 'added 1 package in 412ms\n\nfound 0 vulnerabilities';
   if(args[0]==='list')return 'rendered-os@3.0.0 /home/user\n└── (empty)';
   return 'npm: usage: npm <command>';
 });
-def('nano','dev','text editor','nano [file]',function(args,ctx){
-  var filename=args[0]||'untitled.txt';
-  var n=getNode(resolvePath(ctx.cwd,filename));
-  openNano(filename,(n&&n.type==='file')?n.content:'');
-  return '\x1b[90m(opened '+filename+' — ^S save, ^X exit)\x1b[0m';
+def('pip','dev','Python package manager','pip <command>',async(args)=>{
+  if(args[0]==='search'||args[0]==='info'){
+    return 'pip: PyPI query not implemented — try `pip install <pkg>`';
+  }
+  if(args[0]==='install')return `Collecting ${args[1]||'package'}\nSuccessfully installed ${args[1]||'package'}-1.0.0`;
+  return 'pip: usage: pip <command>';
 });
-def('vim','dev','vi editor (gag)','vim [file]',function(){return '\x1b[7m'+pad(' VIM - Vi IMproved ',78)+'\x1b[0m\n\n  version 9.1.0\n\n  \x1b[90m(use `nano`)\x1b[0m';});
 
-/* ══════════ Nano ══════════ */
-var nanoOpen=false;
+/* ═══════════════════════════════════════════════════════════
+   MATH
+   ═══════════════════════════════════════════════════════════ */
+def('bc','math','calculator','bc [expr]',(args,ctx)=>{
+  const src=args.length?args.join(' '):(ctx.stdin||'');
+  if(!src.trim())return 'bc 1.07.1\n(non-interactive)';
+  return src.split('\n').filter(Boolean).map(line=>{
+    try{
+      const safe=line.replace(/[^0-9+\-*/(). %^]/g,'');
+      return String(Function('"use strict";return ('+safe.replace(/\^/g,'**')+')')());
+    }catch(e){return 'syntax error';}
+  }).join('\n');
+});
+def('calc','math','calculator','calc <expr>',(args,ctx)=>CMDS.bc.fn(args,ctx));
+def('factor','math','prime factors','factor <n>',(args)=>{
+  const n=parseInt(args[0],10);
+  if(isNaN(n))return 'factor: invalid number';
+  let x=Math.abs(n);const out=[];
+  for(let d=2;d*d<=x;d++)while(x%d===0){out.push(d);x/=d;}
+  if(x>1)out.push(x);
+  return `${n}: ${out.join(' ')||n}`;
+});
+def('primes','math','print primes','primes [limit]',(args)=>{
+  const lim=clamp(parseInt(args[0],10)||100,2,2000);
+  const sieve=new Uint8Array(lim+1);
+  const out=[];
+  for(let i=2;i<=lim;i++){
+    if(!sieve[i]){out.push(i);for(let j=i*i;j<=lim;j+=i)sieve[j]=1;}
+  }
+  return out.join(' ');
+});
+
+/* ═══════════════════════════════════════════════════════════
+   FUN
+   ═══════════════════════════════════════════════════════════ */
+const LOGO=['  ██████╗ ','  ██╔══██╗','  ██████╔╝','  ██╔══██╗','  ██║  ██║','  ╚═╝  ╚═╝'];
+const LCOL=[36,36,34,34,35,35];
+def('neofetch','fun','system info','neofetch',()=>{
+  const osrel=readOsRelease();
+  const hn=readHostname()||state.host;
+  const up=Math.floor(performance.now()/1000);
+  const info=[
+    `\x1b[1;36m${state.user}\x1b[0m\x1b[90m@\x1b[0m\x1b[1;36m${hn}\x1b[0m`,
+    '\x1b[90m─────────────────────\x1b[0m',
+    `\x1b[1;33mOS\x1b[0m       \x1b[0m${osrel?osrel.PRETTY_NAME:'RenderedOS'} x86_64`,
+    `\x1b[1;33mKernel\x1b[0m   \x1b[0m6.9.2-rendered`,
+    `\x1b[1;33mUptime\x1b[0m   \x1b[0m${Math.floor(up/3600)}h ${Math.floor((up%3600)/60)}m ${up%60}s`,
+    `\x1b[1;33mShell\x1b[0m    \x1b[0m${state.env.SHELL||'/bin/rsh'}`,
+    `\x1b[1;33mEditor\x1b[0m   \x1b[0m${state.env.EDITOR||'nano'}`,
+    `\x1b[1;33mCPU\x1b[0m      \x1b[0m${navigator.hardwareConcurrency||'?'} cores`,
+    `\x1b[1;33mMemory\x1b[0m   \x1b[0m2.4GiB / 16GiB`,
+    `\x1b[1;33mUsers\x1b[0m    \x1b[0m${(readPasswd()||[]).length} configured`,
+    `\x1b[1;33mServices\x1b[0m \x1b[0m${(readServices()||[]).length} registered`,
+    `\x1b[1;33mLocale\x1b[0m   \x1b[0m${state.env.LANG||'C'}`
+  ];
+  const palette=['\x1b[40m   \x1b[41m   \x1b[42m   \x1b[43m   \x1b[44m   \x1b[45m   \x1b[46m   \x1b[47m   \x1b[0m','\x1b[100m   \x1b[101m   \x1b[102m   \x1b[103m   \x1b[104m   \x1b[105m   \x1b[106m   \x1b[107m   \x1b[0m'];
+  const rows=Math.max(LOGO.length,info.length+2);
+  const out=[];
+  for(let i=0;i<rows;i++){
+    const left=i<LOGO.length?`\x1b[1;${LCOL[i]}m${LOGO[i]}\x1b[0m`:'          ';
+    const right=i<info.length?info[i]:'';
+    out.push(left+'  '+right);
+  }
+  out.push('');
+  out.push('          '+palette[0]);
+  out.push('          '+palette[1]);
+  return out.join('\n');
+});
+const COW=['        \\   ^__^','         \\  (oo)\\_______','            (__)\\       )\\/\\','                ||----w |','                ||     ||'];
+function bubble(text){
+  const w=Math.max(text.length,1);
+  const out=[];
+  out.push(' '+'_'.repeat(w+2));
+  out.push('< '+text+' >');
+  out.push(' '+'-'.repeat(w+2));
+  return out;
+}
+def('cowsay','fun','speaking cow','cowsay [msg]',(args,ctx)=>{
+  const msg=args.join(' ')||ctx.stdin||'moo';
+  return bubble(msg).concat(COW).join('\n');
+});
+const FORTUNES=['The best way to predict the future is to implement it.','Simplicity is prerequisite for reliability.','Any sufficiently advanced bug is indistinguishable from a feature.','You cannot grep a feeling.','rm -rf is a state of mind.','Everything is a file, including your regrets.','Real programmers count from zero.','There is no cloud. It is just someone else\'s computer.'];
+def('fortune','fun','random adage','fortune',()=>FORTUNES[Math.floor(Math.random()*FORTUNES.length)]);
+def('matrix','fun','digital rain','matrix',async()=>{
+  const W=70,H=16;
+  const chars='アイウエオカキクケコ0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  const drops=Array.from({length:W},()=>Math.random()*H);
+  const live=makeLive();
+  for(let f=0;f<50;f++){
+    let out='';
+    for(let y=0;y<H;y++){
+      for(let x=0;x<W;x++){
+        const head=Math.floor(drops[x]);
+        const d=head-y;
+        if(d===0)out+='\x1b[1;97m'+chars[Math.random()*chars.length|0]+'\x1b[0m';
+        else if(d>0&&d<8)out+='\x1b[32m'+chars[Math.random()*chars.length|0]+'\x1b[0m';
+        else out+=' ';
+      }
+      out+='\n';
+    }
+    live.set(out);
+    for(let i=0;i<W;i++){drops[i]+=0.4+Math.random()*0.8;if(drops[i]>H+10)drops[i]=-Math.random()*12;}
+    await sleep(50);
+  }
+  live.set('\x1b[90m(matrix ended)\x1b[0m');
+  return '';
+});
+def('xyzzy','fun','nothing happens','xyzzy',()=>'\x1b[90mNothing happens.\x1b[0m\n\x1b[90m(Try `north`.)\x1b[0m');
+def('42','fun','the answer','42',()=>'\x1b[1;36m42\x1b[0m\n\x1b[90m— but you still need to know the question.\x1b[0m');
+def('coffee','fun','brew coffee','coffee',()=>'\x1b[33m    ( (\x1b[0m\n\x1b[33m     ) )\x1b[0m\n\x1b[33m  ........\x1b[0m\n\x1b[33m  |      |]\x1b[0m\n\x1b[33m  \\      /\x1b[0m\n\x1b[33m   `----\'\x1b[0m\n\n☕ your coffee is ready.');
+def('wizard','fun','a wizard appears','wizard',()=>'\x1b[35m     /\\\x1b[0m\n\x1b[35m    /  \\\x1b[0m\n\x1b[35m   /____\\\x1b[0m\n\x1b[35m   | o o|\x1b[0m\n\x1b[35m   |  ^ |\x1b[0m\n\x1b[35m   |\\_/ |\x1b[0m\n\x1b[35m   |____|\x1b[0m\n\n\x1b[90mHe does not fix your code. He only tells you:\x1b[0m\n\x1b[90m"it was a semicolon."\x1b[0m');
+def('north','fun','go north','north',()=>'\x1b[90mYou walk north. Nothing happens.\x1b[0m');
+def('south','fun','go south','south',()=>'\x1b[90mA cold wind blows from the south.\x1b[0m');
+def('east','fun','go east','east',()=>'\x1b[90mYou walk east. You are at the edge of the world.\x1b[0m');
+def('west','fun','go west','west',()=>'\x1b[90mThe sun sets. Beautiful. Then it rises again instantly.\x1b[0m');
+def('wake','fun','wake up','wake',()=>'\x1b[1;37mWake up.\x1b[0m\n\n\x1b[90mThe terminal has you.\x1b[0m');
+def('please','fun','say please','please',()=>'\x1b[32mSince you asked so nicely.\x1b[0m');
+def('hello','fun','greet','hello',()=>'\x1b[32mHello!\x1b[0m');
+def('wq','fun',':wq','wq',()=>'\x1b[33m:wq — nice try, vim user.\x1b[0m\n\x1b[90m(use `nano`.)\x1b[0m');
+
+/* ═══════════════════════════════════════════════════════════
+   NANO
+   ═══════════════════════════════════════════════════════════ */
+let nanoOpen=false;
 function openNano(filename,initialContent){
   nanoOpen=true;
-  var overlay=document.getElementById('nano');
-  var title=document.getElementById('nano-title');
-  var modEl=document.getElementById('nano-modified');
-  var gutter=document.getElementById('nano-gutter');
-  var textEl=document.getElementById('nano-text');
-  var statusEl=document.getElementById('nano-status');
-  var lines=initialContent.replace(/\n$/,'').split('\n');
+  const overlay=document.getElementById('nano');
+  const title=document.getElementById('nano-title');
+  const modEl=document.getElementById('nano-modified');
+  const gutter=document.getElementById('nano-gutter');
+  const textEl=document.getElementById('nano-text');
+  const statusEl=document.getElementById('nano-status');
+  let lines=initialContent.replace(/\n$/,'').split('\n');
   if(lines.length===1&&lines[0]==='')lines=[''];
-  var row=0,col=0,dirty=false,scroll=0;
+  let row=0,col=0,dirty=false,kill='',scroll=0;
   title.textContent=filename||'[New Buffer]';
   function render(){
-    var h=Math.max(10,Math.floor((window.innerHeight-140)/21));
+    const h=Math.max(10,Math.floor((window.innerHeight-140)/21));
     if(row<scroll)scroll=row;
     if(row>=scroll+h)scroll=row-h+1;
-    var vis=lines.slice(scroll,scroll+h);
-    gutter.innerHTML=vis.map(function(_,i){return String(scroll+i+1).padStart(4);}).join('\n');
-    textEl.innerHTML=vis.map(function(l,i){
-      var r=scroll+i;
+    const vis=lines.slice(scroll,scroll+h);
+    gutter.innerHTML=vis.map((_,i)=>String(scroll+i+1).padStart(4)).join('\n');
+    textEl.innerHTML=vis.map((l,i)=>{
+      const r=scroll+i;
       if(r!==row)return escHtml(l);
-      return escHtml(l.slice(0,col))+'<span class="cursor">'+escHtml(l.charAt(col)||' ')+'</span>'+escHtml(l.slice(col+1));
+      return escHtml(l.slice(0,col))+'<span class="cursor">'+escHtml(l[col]||' ')+'</span>'+escHtml(l.slice(col+1));
     }).join('\n');
-    statusEl.textContent='  '+filename+'  ·  Ln '+(row+1)+', Col '+(col+1)+'  ·  '+lines.length+' lines'+(dirty?'  ·  [modified]':'');
+    statusEl.textContent=`  ${filename}  ·  Ln ${row+1}, Col ${col+1}  ·  ${lines.length} lines${dirty?'  ·  [modified]':''}`;
     modEl.textContent=dirty?'modified':'';
   }
   function save(){
-    var content=lines.join('\n')+(lines.length?'\n':'');
+    const content=lines.join('\n')+(lines.length?'\n':'');
     if(writeFile(resolvePath(state.cwd,filename),content)){dirty=false;saveFS();render();}
   }
   function close(){overlay.classList.remove('visible');nanoOpen=false;document.removeEventListener('keydown',onKey);inputEl.focus();}
   function onKey(e){
     if(!nanoOpen)return;
-    var ctrl=e.ctrlKey||e.metaKey;
+    const ctrl=e.ctrlKey||e.metaKey;
     if(ctrl&&e.key==='s'){e.preventDefault();save();return;}
     if(ctrl&&e.key==='x'){e.preventDefault();if(dirty)save();close();return;}
-    if(e.key==='Enter'){e.preventDefault();var a=lines[row].slice(0,col),b=lines[row].slice(col);lines[row]=a;lines.splice(row+1,0,b);row++;col=0;dirty=true;render();return;}
+    if(e.key==='Enter'){e.preventDefault();const a=lines[row].slice(0,col),b=lines[row].slice(col);lines[row]=a;lines.splice(row+1,0,b);row++;col=0;dirty=true;render();return;}
     if(e.key==='Backspace'){e.preventDefault();if(col>0){lines[row]=lines[row].slice(0,col-1)+lines[row].slice(col);col--;dirty=true;}else if(row>0){col=lines[row-1].length;lines[row-1]+=lines[row];lines.splice(row,1);row--;dirty=true;}render();return;}
     if(e.key==='ArrowLeft'){e.preventDefault();if(col>0)col--;else if(row>0){row--;col=lines[row].length;}render();return;}
     if(e.key==='ArrowRight'){e.preventDefault();if(col<lines[row].length)col++;else if(row<lines.length-1){row++;col=0;}render();return;}
@@ -2281,384 +2356,23 @@ function openNano(filename,initialContent){
   render();
   inputEl.blur();
 }
-
-/* ══════════ Fun ══════════ */
-var LOGO=['  ██████╗ ','  ██╔══██╗','  ██████╔╝','  ██╔══██╗','  ██║  ██║','  ╚═╝  ╚═╝'];
-var LCOL=[36,36,34,34,35,35];
-def('neofetch','fun','system info','neofetch',function(){
-  var osrel=readOsRelease();
-  var hn=readHostname()||state.host;
-  var up=Math.floor(performance.now()/1000);
-  var info=[
-    '\x1b[1;36m'+state.user+'\x1b[0m\x1b[90m@\x1b[0m\x1b[1;36m'+hn+'\x1b[0m',
-    '\x1b[90m─────────────────────\x1b[0m',
-    '\x1b[1;33mOS\x1b[0m       \x1b[0m'+(osrel?osrel.PRETTY_NAME:'RenderedOS')+' x86_64',
-    '\x1b[1;33mKernel\x1b[0m   \x1b[0m6.9.2-rendered',
-    '\x1b[1;33mUptime\x1b[0m   \x1b[0m'+Math.floor(up/3600)+'h '+Math.floor((up%3600)/60)+'m '+(up%60)+'s',
-    '\x1b[1;33mShell\x1b[0m    \x1b[0m'+(state.env.SHELL||'/bin/rsh'),
-    '\x1b[1;33mEditor\x1b[0m   \x1b[0m'+(state.env.EDITOR||'nano'),
-    '\x1b[1;33mCPU\x1b[0m      \x1b[0m'+(navigator.hardwareConcurrency||'?')+' cores',
-    '\x1b[1;33mMemory\x1b[0m   \x1b[0m2.4GiB / 16GiB',
-    '\x1b[1;33mUsers\x1b[0m    \x1b[0m'+((readPasswd()||[]).length)+' configured',
-    '\x1b[1;33mServices\x1b[0m \x1b[0m'+((readServices()||[]).length)+' registered',
-    '\x1b[1;33mLocale\x1b[0m   \x1b[0m'+(state.env.LANG||'C')
-  ];
-  var palette=['\x1b[40m   \x1b[41m   \x1b[42m   \x1b[43m   \x1b[44m   \x1b[45m   \x1b[46m   \x1b[47m   \x1b[0m','\x1b[100m   \x1b[101m   \x1b[102m   \x1b[103m   \x1b[104m   \x1b[105m   \x1b[106m   \x1b[107m   \x1b[0m'];
-  var rows=Math.max(LOGO.length,info.length+2);
-  var out=[];
-  for(var i=0;i<rows;i++){
-    var left=i<LOGO.length?'\x1b[1;'+LCOL[i]+'m'+LOGO[i]+'\x1b[0m':'          ';
-    var right=i<info.length?info[i]:'';
-    out.push(left+'  '+right);
-  }
-  out.push('');
-  out.push('          '+palette[0]);
-  out.push('          '+palette[1]);
-  return out.join('\n');
+def('nano','dev','text editor','nano [file]',(args,ctx)=>{
+  const filename=args[0]||'untitled.txt';
+  const n=getNode(resolvePath(ctx.cwd,filename));
+  openNano(filename,(n&&n.type==='file')?n.content:'');
+  return '\x1b[90m(opened '+filename+' — ^S save, ^X exit)\x1b[0m';
 });
-var COW=['        \\   ^__^','         \\  (oo)\\_______','            (__)\\       )\\/\\','                ||----w |','                ||     ||'];
-def('cowsay','fun','speaking cow','cowsay [msg]',function(args,ctx){
-  var msg=args.join(' ')||ctx.stdin||'moo';
-  var w=Math.max(msg.length,1);
-  var out=[];
-  out.push(' '+'_'.repeat(w+2));
-  out.push('< '+msg+' >');
-  out.push(' '+'-'.repeat(w+2));
-  return out.concat(COW).join('\n');
-});
-var FORTUNES=['The best way to predict the future is to implement it.','Simplicity is prerequisite for reliability.','Any sufficiently advanced bug is indistinguishable from a feature.','You cannot grep a feeling.','rm -rf is a state of mind.','Everything is a file, including your regrets.','Real programmers count from zero.','There is no cloud. It is just someone else\'s computer.'];
-def('fortune','fun','random adage','fortune',function(){return FORTUNES[Math.floor(Math.random()*FORTUNES.length)];});
-def('xyzzy','fun','nothing happens','xyzzy',function(){return '\x1b[90mNothing happens.\x1b[0m\n\x1b[90m(Try `north`.)\x1b[0m';});
-def('42','fun','the answer','42',function(){return '\x1b[1;36m42\x1b[0m\n\x1b[90m— but you still need to know the question.\x1b[0m';});
-def('coffee','fun','brew coffee','coffee',function(){return '\x1b[33m    ( (\x1b[0m\n\x1b[33m     ) )\x1b[0m\n\x1b[33m  ........\x1b[0m\n\x1b[33m  |      |]\x1b[0m\n\x1b[33m  \\      /\x1b[0m\n\x1b[33m   `----\'\x1b[0m\n\n☕ your coffee is ready.';});
-def('north','fun','go north','north',function(){return '\x1b[90mYou walk north. Nothing happens.\x1b[0m';});
-def('south','fun','go south','south',function(){return '\x1b[90mA cold wind blows from the south.\x1b[0m';});
-def('east','fun','go east','east',function(){return '\x1b[90mYou walk east. You are at the edge of the world.\x1b[0m';});
-def('west','fun','go west','west',function(){return '\x1b[90mThe sun sets. Beautiful. Then it rises again instantly.\x1b[0m';});
-def('wake','fun','wake up','wake',function(){return '\x1b[1;37mWake up.\x1b[0m\n\n\x1b[90mThe terminal has you.\x1b[0m';});
-def('please','fun','say please','please',function(){return '\x1b[32mSince you asked so nicely.\x1b[0m';});
-def('hello','fun','greet','hello',function(){return '\x1b[32mHello!\x1b[0m';});
-def('wq','fun',':wq','wq',function(){return '\x1b[33m:wq — nice try, vim user.\x1b[0m\n\x1b[90m(use `nano`.)\x1b[0m';});
+def('vim','dev','vi editor (gag)','vim [file]',()=>'\x1b[7m'+pad(' VIM - Vi IMproved ',78)+'\x1b[0m\n\n  version 9.1.0\n\n  \x1b[90m(use `nano`)\x1b[0m');
 
-/* ══════════ Math ══════════ */
-def('bc','math','calculator','bc [expr]',function(args,ctx){
-  var src=args.length?args.join(' '):(ctx.stdin||'');
-  if(!src.trim())return 'bc 1.07.1\n(non-interactive)';
-  return src.split('\n').filter(Boolean).map(function(line){
-    try{
-      var safe=line.replace(/[^0-9+\-*/(). %^]/g,'');
-      return String(Function('"use strict";return ('+safe.replace(/\^/g,'**')+')')());
-    }catch(e){return 'syntax error';}
-  }).join('\n');
-});
-def('calc','math','calculator','calc <expr>',function(args,ctx){return CMDS.bc.fn(args,ctx);});
-def('factor','math','prime factors','factor <n>',function(args){
-  var n=parseInt(args[0],10);
-  if(isNaN(n))return 'factor: invalid number';
-  var x=Math.abs(n),out=[];
-  for(var d=2;d*d<=x;d++)while(x%d===0){out.push(d);x/=d;}
-  if(x>1)out.push(x);
-  return n+': '+(out.join(' ')||n);
-});
-def('primes','math','print primes','primes [limit]',function(args){
-  var lim=clamp(parseInt(args[0],10)||100,2,2000);
-  var sieve=new Uint8Array(lim+1);
-  var out=[];
-  for(var i=2;i<=lim;i++){
-    if(!sieve[i]){out.push(i);for(var j=i*i;j<=lim;j+=i)sieve[j]=1;}
-  }
-  return out.join(' ');
-});
-
-/* ══════════ /bin population ══════════ */
-function ensureBins(){
-  var bin=getNode('/bin');
-  if(!bin||bin.type!=='dir')return;
-  for(var name in CMDS){
-    if(BUILTINS.has(name))continue;
-    if(!bin.children[name]){
-      bin.children[name]=F('#! /bin/rsh\n# /bin/'+name+' — RenderedOS binary\n',{mode:'755'});
-    }
-  }
-}
-function findBinary(name){
-  var paths=['/bin/','/usr/bin/','/sbin/','/usr/sbin/','/usr/local/bin/'];
-  for(var i=0;i<paths.length;i++)if(getNode(paths[i]+name))return paths[i]+name;
-  return null;
-}
-
-/* ══════════ Shell ══════════ */
-function tokenize(str){
-  var tokens=[];
-  var cur='',quote=null,i=0;
-  while(i<str.length){
-    var c=str.charAt(i);
-    if(quote){
-      if(c===quote){quote=null;i++;continue;}
-      if(c==='\\'&&quote==='"'&&i+1<str.length){cur+=str.charAt(i+1);i+=2;continue;}
-      cur+=c;i++;continue;
-    }
-    if(c==='"'||c==="'"){quote=c;i++;continue;}
-    if(c==='\\'&&i+1<str.length){cur+=str.charAt(i+1);i+=2;continue;}
-    if(c===' '||c==='\t'){if(cur!==''){tokens.push(cur);cur='';}i++;continue;}
-    if(c==='|'||c==='>'||c==='&'||c===';'){
-      if(cur!==''){tokens.push(cur);cur='';}
-      if(c==='>'&&str.charAt(i+1)==='>'){tokens.push('>>');i+=2;continue;}
-      if(c==='&'&&str.charAt(i+1)==='&'){tokens.push('&&');i+=2;continue;}
-      if(c==='|'&&str.charAt(i+1)==='|'){tokens.push('||');i+=2;continue;}
-      tokens.push(c);i++;continue;
-    }
-    cur+=c;i++;
-  }
-  if(cur!=='')tokens.push(cur);
-  return tokens;
-}
-function splitRedirect(tokens){
-  var redirect=null;
-  var out=[];
-  for(var i=0;i<tokens.length;i++){
-    if(tokens[i]==='>'||tokens[i]==='>>'){redirect={mode:tokens[i],file:tokens[i+1]};i++;}
-    else out.push(tokens[i]);
-  }
-  return {tokens:out,redirect:redirect};
-}
-function applyAlias(tokens){
-  if(!tokens.length)return tokens;
-  var a=state.aliases[tokens[0]];
-  if(!a)return tokens;
-  return tokenize(a).concat(tokens.slice(1));
-}
-
-async function runStage(tokens,stdin,opts){
-  opts=opts||{};
-  tokens=applyAlias(tokens);
-  if(!tokens.length)return {stdout:'',code:0};
-  var name=tokens[0];
-  var args=tokens.slice(1);
-
-  if(state.mode==='recovery'&&!RECOVERY_ALLOW.has(name)){
-    return {stdout:'rsh: '+name+': not available in recovery mode',code:127};
-  }
-
-  if(BUILTINS.has(name)){
-    var c=CMDS[name];
-    if(!c)return {stdout:'rsh: '+name+': builtin not implemented',code:127};
-    if(args[0]==='--help')return {stdout:manPage(c),code:0};
-    var ctx={cwd:state.cwd,stdin:stdin||'',state:state,print:print,clear:clearScreen,sleep:sleep,live:makeLive,sudo:!!opts.sudo};
-    try{
-      var res=c.fn(args,ctx);
-      if(res&&typeof res.then==='function')res=await res;
-      var out=res==null?'':String(res);
-      if(out&&!out.endsWith('\n'))out+='\n';
-      return {stdout:out,code:0};
-    }catch(err){
-      return {stdout:'\x1b[31m'+name+': '+(err&&err.message?err.message:'error')+'\x1b[0m',code:1};
-    }
-  }
-
-  var bin=findBinary(name);
-  if(!bin){
-    return {stdout:'rsh: '+name+': command not found\n\x1b[90m(the binary /bin/'+name+' is missing — try install)\x1b[0m',code:127};
-  }
-
-  var c2=CMDS[name];
-  if(!c2){
-    return {stdout:'rsh: '+name+': binary exists but command is not implemented',code:127};
-  }
-  if(args[0]==='--help')return {stdout:manPage(c2),code:0};
-
-  var ctx2={cwd:state.cwd,stdin:stdin||'',state:state,print:print,clear:clearScreen,sleep:sleep,live:makeLive,sudo:!!opts.sudo};
-  try{
-    var res2=c2.fn(args,ctx2);
-    if(res2&&typeof res2.then==='function')res2=await res2;
-    var out2=res2==null?'':String(res2);
-    if(out2&&!out2.endsWith('\n'))out2+='\n';
-    return {stdout:out2,code:0};
-  }catch(err){
-    return {stdout:'\x1b[31m'+name+': '+(err&&err.message?err.message:'error')+'\x1b[0m',code:1};
-  }
-}
-
-async function execPipeline(stageTokens){
-  var stages=[];
-  var cur=[];
-  for(var i=0;i<stageTokens.length;i++){
-    if(stageTokens[i]==='|'){stages.push(cur);cur=[];}
-    else cur.push(stageTokens[i]);
-  }
-  stages.push(cur);
-  var stdin='',code=0;
-  for(var s=0;s<stages.length;s++){
-    var sr=splitRedirect(stages[s]);
-    var tokens=sr.tokens,redirect=sr.redirect;
-    var isLast=s===stages.length-1;
-    if(!tokens.length){stdin='';continue;}
-    var res=await runStage(tokens,stdin);
-    code=res.code;
-    if(redirect){
-      var path=resolvePath(state.cwd,redirect.file);
-      var ok=writeFile(path,res.stdout,redirect.mode==='>>');
-      if(ok)saveFS();
-      else print('rsh: '+redirect.file+': cannot write');
-      stdin='';
-    }else if(isLast){
-      if(res.stdout)print(res.stdout);
-      stdin='';
-    }else{
-      stdin=res.stdout;
-    }
-  }
-  return code;
-}
-
-async function execLine(line){
-  var tokens=tokenize(line);
-  if(!tokens.length)return 0;
-  var segments=[],ops=[];
-  var cur=[];
-  for(var i=0;i<tokens.length;i++){
-    var t=tokens[i];
-    if(t===';'||t==='&&'||t==='||'){segments.push(cur);ops.push(t);cur=[];}
-    else cur.push(t);
-  }
-  segments.push(cur);
-  var code=0;
-  for(var j=0;j<segments.length;j++){
-    if(j>0){
-      var op=ops[j-1];
-      if(op==='&&'&&code!==0)continue;
-      if(op==='||'&&code===0)continue;
-    }
-    code=await execPipeline(segments[j]);
-  }
-  return code;
-}
-
-async function captureOutput(line,opts){
-  opts=opts||{};
-  var tokens=tokenize(line);
-  var stages=[];
-  var cur=[];
-  for(var i=0;i<tokens.length;i++){
-    if(tokens[i]==='|'){stages.push(cur);cur=[];}
-    else cur.push(tokens[i]);
-  }
-  stages.push(cur);
-  var stdin='',out='';
-  for(var s=0;s<stages.length;s++){
-    var sr=splitRedirect(stages[s]);
-    if(!sr.tokens.length)continue;
-    var res=await runStage(sr.tokens,stdin,opts);
-    stdin=res.stdout;
-    out=res.stdout;
-  }
-  return out.replace(/\n$/,'');
-}
-
-/* ══════════ Prompt / Input ══════════ */
-function promptText(){
-  if(state.mode==='recovery')return '\x1b[1;31mrecovery\x1b[0m \x1b[1;33m#\x1b[0m ';
-  var p=state.cwd;
-  if(p===HOME)p='~';
-  else if(p.indexOf(HOME+'/')===0)p='~'+p.slice(HOME.length);
-  return '\x1b[1;32m'+state.user+'\x1b[0m@\x1b[1;32m'+state.host+'\x1b[0m:\x1b[1;34m'+p+'\x1b[0m$ ';
-}
-function refreshPrompt(){promptEl.innerHTML=renderAnsi(promptText());}
-
-function complete(){
-  var value=inputEl.value,caret=inputEl.selectionStart,before=value.slice(0,caret);
-  var parts=before.split(/\s+/);
-  if(parts.length<=1){
-    var frag=parts[0]||'';
-    var names=Object.keys(CMDS).concat(Object.keys(state.aliases));
-    var uniq={};
-    for(var i=0;i<names.length;i++)uniq[names[i]]=1;
-    names=Object.keys(uniq).sort();
-    var hits=names.filter(function(n){return n.indexOf(frag)===0;});
-    if(hits.length===1){inputEl.value=hits[0]+' '+value.slice(caret);inputEl.selectionStart=inputEl.selectionEnd=hits[0].length+1;}
-    else if(hits.length>1){print(hits.join('   '));refreshPrompt();}
-    return;
-  }
-  var frag2=parts[parts.length-1];
-  var slash=frag2.lastIndexOf('/');
-  var dirPart=slash>=0?frag2.slice(0,slash+1):'';
-  var namePart=slash>=0?frag2.slice(slash+1):frag2;
-  var dirPath=resolvePath(state.cwd,dirPart||'.');
-  var dir=getNode(dirPath);
-  if(!dir||dir.type!=='dir')return;
-  var hits2=Object.keys(dir.children).filter(function(n){
-    return n.indexOf(namePart)===0&&(namePart.charAt(0)!=='.'||n.charAt(0)==='.');
-  }).sort();
-  if(hits2.length===1){
-    var suffix=dir.children[hits2[0]].type==='dir'?'/':' ';
-    var newFrag=dirPart+hits2[0]+suffix;
-    inputEl.value=value.slice(0,caret-frag2.length)+newFrag+value.slice(caret);
-    inputEl.selectionStart=inputEl.selectionEnd=caret-frag2.length+newFrag.length;
-  }else if(hits2.length>1){
-    print(hits2.map(function(h){return dir.children[h].type==='dir'?h+'/':h;}).join('   '));
-    refreshPrompt();
-  }
-}
-
-var busy=false;
-async function handleSubmit(){
-  var line=inputEl.value;
-  inputEl.value='';
-  if(state.inputMode==='wipe-confirm'){
-    print('> '+line);
-    print('');
-    var norm=line.trim().toLowerCase();
-    if(norm==='you asked for it'||norm==='that'||norm==='hat'){await doReinstall();}
-    else{
-      print('\x1b[90mThat is not what you were asked to type.\x1b[0m');
-      print('');
-      print('\x1b[1;37mType that.\x1b[0m');
-    }
-    return;
-  }
-  if(state.inputMode==='wipe-pending')return;
-  if(!state.running)return;
-  print(promptText()+line);
-  if(!line.trim()){refreshPrompt();return;}
-  state.history.push(line);
-  state.histIndex=state.history.length;
-  if(state.mode==='running')saveShellState();
-  busy=true;
-  try{await execLine(line);}
-  catch(e){print('\x1b[31mrsh: internal error: '+(e&&e.message)+'\x1b[0m');}
-  busy=false;
-  if(state.inputMode)return;
-  if(!state.running)return;
-  refreshPrompt();
-  scrollBottom();
-  inputEl.focus();
-}
-inputEl.addEventListener('keydown',async function(e){
-  if(e.key==='Enter'){e.preventDefault();if(busy)return;await handleSubmit();return;}
-  if(state.inputMode)return;
-  if(!state.running)return;
-  if(e.key==='ArrowUp'){e.preventDefault();if(!state.history.length)return;state.histIndex=Math.max(0,state.histIndex-1);inputEl.value=state.history[state.histIndex]||'';return;}
-  if(e.key==='ArrowDown'){e.preventDefault();if(!state.history.length)return;state.histIndex=Math.min(state.history.length,state.histIndex+1);inputEl.value=state.history[state.histIndex]||'';return;}
-  if(e.key==='Tab'){e.preventDefault();complete();return;}
-  if(e.ctrlKey&&e.key==='l'){e.preventDefault();clearScreen();refreshPrompt();return;}
-  if(e.ctrlKey&&e.key==='c'){e.preventDefault();print(promptText()+inputEl.value+'\x1b[31m^C\x1b[0m');inputEl.value='';refreshPrompt();return;}
-  if(e.ctrlKey&&e.key==='u'){e.preventDefault();inputEl.value='';return;}
-});
-document.addEventListener('click',function(e){
-  if(nanoOpen)return;
-  if(state.inputMode)return;
-  if(!state.running)return;
-  if(window.getSelection&&String(window.getSelection()).length)return;
-  if(e.target.tagName!=='INPUT')inputEl.focus();
-});
-
-/* ══════════ Wipe / Reinstall ══════════ */
+/* ═══════════════════════════════════════════════════════════
+   THE END OF THE WORLD
+   ═══════════════════════════════════════════════════════════ */
 async function triggerWipe(){
   state.inputMode='wipe-pending';
   inputLine.style.display='none';
-  var victims=['/bin','/sbin','/lib','/lib64','/usr','/etc','/var','/opt','/srv','/root','/home','/boot','/mnt','/media','/tmp'];
-  for(var i=0;i<victims.length;i++){
-    print('\x1b[31mrm: removing '+victims[i]+'\x1b[0m');
+  const victims=['/bin','/sbin','/lib','/lib64','/usr','/etc','/var','/opt','/srv','/root','/home','/boot','/mnt','/media','/tmp'];
+  for(const v of victims){
+    print(`\x1b[31mrm: removing ${v}\x1b[0m`);
     await sleep(65);
   }
   await sleep(250);
@@ -2666,12 +2380,15 @@ async function triggerWipe(){
   await sleep(700);
   print('');
   print('\x1b[33mrm: filesystem is gone.\x1b[0m');
+  print('\x1b[90m(the boot image is intact in RAM for now, but the next reboot will fail)\x1b[0m');
   await sleep(1000);
+
   FS=Dir({}, {owner:'root',group:'root'});
   saveFS();
+
   clearScreen();
   await sleep(600);
-  for(var i=0;i<5;i++)print('');
+  for(let i=0;i<5;i++)print('');
   print('');
   print('\x1b[1;37m                     You asked for it.\x1b[0m');
   print('');
@@ -2707,6 +2424,8 @@ async function doReinstall(){
   await sleep(850);
   print('\x1b[90m  > configuring ………………………………………… ok\x1b[0m');
   await sleep(500);
+  print('\x1b[90m  > installing bootloader …………………… ok\x1b[0m');
+  await sleep(500);
   print('');
   print('\x1b[32m✓ reinstall complete.\x1b[0m');
   await sleep(700);
@@ -2715,9 +2434,294 @@ async function doReinstall(){
   location.reload();
 }
 
-/* ══════════ Start ══════════ */
+/* ═══════════════════════════════════════════════════════════
+   /bin population
+   ═══════════════════════════════════════════════════════════ */
+function ensureBins(){
+  const bin=getNode('/bin');
+  if(!bin||bin.type!=='dir')return;
+  for(const name of Object.keys(CMDS)){
+    if(BUILTINS.has(name))continue;
+    if(!bin.children[name]){
+      bin.children[name]=F('#! /bin/rsh\n# /bin/'+name+' — RenderedOS binary\n',{mode:'755'});
+    }
+  }
+}
+function findBinary(name){
+  for(const p of ['/bin/','/usr/bin/','/sbin/','/usr/sbin/','/usr/local/bin/']){
+    if(getNode(p+name))return p+name;
+  }
+  return null;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SHELL
+   ═══════════════════════════════════════════════════════════ */
+function tokenize(str){
+  const tokens=[];
+  let cur='',quote=null,i=0;
+  while(i<str.length){
+    const c=str[i];
+    if(quote){
+      if(c===quote){quote=null;i++;continue;}
+      if(c==='\\'&&quote==='"'&&i+1<str.length){cur+=str[i+1];i+=2;continue;}
+      cur+=c;i++;continue;
+    }
+    if(c==='"'||c==="'"){quote=c;i++;continue;}
+    if(c==='\\'&&i+1<str.length){cur+=str[i+1];i+=2;continue;}
+    if(c===' '||c==='\t'){if(cur!==''){tokens.push(cur);cur='';}i++;continue;}
+    if(c==='|'||c==='>'||c==='&'||c===';'){
+      if(cur!==''){tokens.push(cur);cur='';}
+      if(c==='>'&&str[i+1]==='>'){tokens.push('>>');i+=2;continue;}
+      if(c==='&'&&str[i+1]==='&'){tokens.push('&&');i+=2;continue;}
+      if(c==='|'&&str[i+1]==='|'){tokens.push('||');i+=2;continue;}
+      tokens.push(c);i++;continue;
+    }
+    cur+=c;i++;
+  }
+  if(cur!=='')tokens.push(cur);
+  return tokens;
+}
+function splitRedirect(tokens){
+  let redirect=null;
+  const out=[];
+  for(let i=0;i<tokens.length;i++){
+    if(tokens[i]==='>'||tokens[i]==='>>'){redirect={mode:tokens[i],file:tokens[i+1]};i++;}
+    else out.push(tokens[i]);
+  }
+  return {tokens:out,redirect};
+}
+function applyAlias(tokens){
+  if(!tokens.length)return tokens;
+  const a=state.aliases[tokens[0]];
+  if(!a)return tokens;
+  return tokenize(a).concat(tokens.slice(1));
+}
+
+async function runStage(tokens,stdin,opts){
+  opts=opts||{};
+  tokens=applyAlias(tokens);
+  if(!tokens.length)return {stdout:'',code:0};
+  const name=tokens[0];
+  const args=tokens.slice(1);
+
+  if(state.mode==='recovery'&&!RECOVERY_ALLOW.has(name)){
+    return {stdout:`rsh: ${name}: not available in recovery mode`,code:127};
+  }
+
+  if(BUILTINS.has(name)){
+    const c=CMDS[name];
+    if(!c)return {stdout:`rsh: ${name}: builtin not implemented`,code:127};
+    if(args[0]==='--help')return {stdout:manPage(c),code:0};
+    const ctx={cwd:state.cwd,stdin:stdin||'',state,print,clear:clearScreen,sleep,live:makeLive,sudo:!!opts.sudo};
+    try{
+      let res=c.fn(args,ctx);
+      if(res&&typeof res.then==='function')res=await res;
+      let out=res==null?'':String(res);
+      if(out&&!out.endsWith('\n'))out+='\n';
+      return {stdout:out,code:0};
+    }catch(err){
+      return {stdout:`\x1b[31m${name}: ${err&&err.message?err.message:'error'}\x1b[0m`,code:1};
+    }
+  }
+
+  const bin=findBinary(name);
+  if(!bin){
+    return {stdout:`rsh: ${name}: command not found\n\x1b[90m(the binary /bin/${name} is missing — try 'install' to restore)\x1b[0m`,code:127};
+  }
+
+  const c=CMDS[name];
+  if(!c){
+    return {stdout:`rsh: ${name}: binary exists but command is not implemented`,code:127};
+  }
+  if(args[0]==='--help')return {stdout:manPage(c),code:0};
+
+  const ctx={cwd:state.cwd,stdin:stdin||'',state,print,clear:clearScreen,sleep,live:makeLive,sudo:!!opts.sudo};
+  try{
+    let res=c.fn(args,ctx);
+    if(res&&typeof res.then==='function')res=await res;
+    let out=res==null?'':String(res);
+    if(out&&!out.endsWith('\n'))out+='\n';
+    return {stdout:out,code:0};
+  }catch(err){
+    return {stdout:`\x1b[31m${name}: ${err&&err.message?err.message:'error'}\x1b[0m`,code:1};
+  }
+}
+
+async function execPipeline(stageTokens){
+  const stages=[];
+  let cur=[];
+  for(const t of stageTokens){if(t==='|'){stages.push(cur);cur=[];}else cur.push(t);}
+  stages.push(cur);
+
+  let stdin='',code=0;
+  for(let i=0;i<stages.length;i++){
+    const {tokens,redirect}=splitRedirect(stages[i]);
+    const isLast=i===stages.length-1;
+    if(!tokens.length){stdin='';continue;}
+    const res=await runStage(tokens,stdin);
+    code=res.code;
+    if(redirect){
+      const path=resolvePath(state.cwd,redirect.file);
+      const ok=writeFile(path,res.stdout,redirect.mode==='>>');
+      if(ok)saveFS();
+      else print(`rsh: ${redirect.file}: cannot write`);
+      stdin='';
+    }else if(isLast){
+      if(res.stdout)print(res.stdout);
+      stdin='';
+    }else{
+      stdin=res.stdout;
+    }
+  }
+  return code;
+}
+async function execLine(line){
+  const tokens=tokenize(line);
+  if(!tokens.length)return 0;
+  const segments=[],ops=[];
+  let cur=[];
+  for(const t of tokens){
+    if(t===';'||t==='&&'||t==='||'){segments.push(cur);ops.push(t);cur=[];}
+    else cur.push(t);
+  }
+  segments.push(cur);
+  let code=0;
+  for(let i=0;i<segments.length;i++){
+    if(i>0){
+      const op=ops[i-1];
+      if(op==='&&'&&code!==0)continue;
+      if(op==='||'&&code===0)continue;
+    }
+    code=await execPipeline(segments[i]);
+  }
+  return code;
+}
+async function captureOutput(line,opts){
+  opts=opts||{};
+  const tokens=tokenize(line);
+  const stages=[];
+  let cur=[];
+  for(const t of tokens){if(t==='|'){stages.push(cur);cur=[];}else cur.push(t);}
+  stages.push(cur);
+  let stdin='',out='';
+  for(const s of stages){
+    const {tokens:tk}=splitRedirect(s);
+    if(!tk.length)continue;
+    const res=await runStage(tk,stdin,opts);
+    stdin=res.stdout;
+    out=res.stdout;
+  }
+  return out.replace(/\n$/,'');
+}
+
+/* ═══════════════════════════════════════════════════════════
+   PROMPT / INPUT
+   ═══════════════════════════════════════════════════════════ */
+function promptText(){
+  if(state.mode==='recovery')return '\x1b[1;31mrecovery\x1b[0m \x1b[1;33m#\x1b[0m ';
+  let p=state.cwd;
+  if(p===HOME)p='~';
+  else if(p.startsWith(HOME+'/'))p='~'+p.slice(HOME.length);
+  return `\x1b[1;32m${state.user}\x1b[0m@\x1b[1;32m${state.host}\x1b[0m:\x1b[1;34m${p}\x1b[0m$ `;
+}
+function refreshPrompt(){promptEl.innerHTML=renderAnsi(promptText());}
+
+function complete(){
+  const value=inputEl.value,caret=inputEl.selectionStart,before=value.slice(0,caret);
+  const parts=before.split(/\s+/);
+  if(parts.length<=1){
+    const frag=parts[0]||'';
+    const names=[...new Set(Object.keys(CMDS).concat(Object.keys(state.aliases)))].sort();
+    const hits=names.filter(n=>n.startsWith(frag));
+    if(hits.length===1){inputEl.value=hits[0]+' '+value.slice(caret);inputEl.selectionStart=inputEl.selectionEnd=hits[0].length+1;}
+    else if(hits.length>1){print(hits.join('   '));refreshPrompt();}
+    return;
+  }
+  const frag=parts[parts.length-1];
+  const slash=frag.lastIndexOf('/');
+  const dirPart=slash>=0?frag.slice(0,slash+1):'';
+  const namePart=slash>=0?frag.slice(slash+1):frag;
+  const dirPath=resolvePath(state.cwd,dirPart||'.');
+  const dir=getNode(dirPath);
+  if(!dir||dir.type!=='dir')return;
+  const hits=Object.keys(dir.children).filter(n=>n.startsWith(namePart)&&(!namePart.startsWith('.')||n.startsWith('.'))).sort();
+  if(hits.length===1){
+    const suffix=dir.children[hits[0]].type==='dir'?'/':' ';
+    const newFrag=dirPart+hits[0]+suffix;
+    inputEl.value=value.slice(0,caret-frag.length)+newFrag+value.slice(caret);
+    inputEl.selectionStart=inputEl.selectionEnd=caret-frag.length+newFrag.length;
+  }else if(hits.length>1){
+    print(hits.map(h=>dir.children[h].type==='dir'?h+'/':h).join('   '));
+    refreshPrompt();
+  }
+}
+
+let busy=false;
+async function handleSubmit(){
+  const line=inputEl.value;
+  inputEl.value='';
+
+  if(state.inputMode==='wipe-confirm'){
+    print('> '+line);
+    print('');
+    const norm=line.trim().toLowerCase();
+    if(norm==='you asked for it'||norm==='that'||norm==='hat'){
+      await doReinstall();
+    }else{
+      print('\x1b[90mThat is not what you were asked to type.\x1b[0m');
+      print('');
+      print('\x1b[1;37mType that.\x1b[0m');
+    }
+    return;
+  }
+  if(state.inputMode==='wipe-pending')return;
+  if(!state.running)return;
+
+  print(promptText()+line);
+  if(!line.trim()){refreshPrompt();return;}
+  state.history.push(line);
+  state.histIndex=state.history.length;
+  if(state.mode==='running')saveShellState();
+  busy=true;
+  try{await execLine(line);}
+  catch(e){print('\x1b[31mrsh: internal error: '+(e&&e.message)+'\x1b[0m');}
+  busy=false;
+  if(state.inputMode)return;
+  if(!state.running)return;
+  refreshPrompt();
+  scrollBottom();
+  inputEl.focus();
+}
+inputEl.addEventListener('keydown',async(e)=>{
+  if(e.key==='Enter'){
+    e.preventDefault();
+    if(busy)return;
+    await handleSubmit();
+    return;
+  }
+  if(state.inputMode)return;
+  if(!state.running)return;
+  if(e.key==='ArrowUp'){e.preventDefault();if(!state.history.length)return;state.histIndex=Math.max(0,state.histIndex-1);inputEl.value=state.history[state.histIndex]||'';return;}
+  if(e.key==='ArrowDown'){e.preventDefault();if(!state.history.length)return;state.histIndex=Math.min(state.history.length,state.histIndex+1);inputEl.value=state.history[state.histIndex]||'';return;}
+  if(e.key==='Tab'){e.preventDefault();complete();return;}
+  if(e.ctrlKey&&e.key==='l'){e.preventDefault();clearScreen();refreshPrompt();return;}
+  if(e.ctrlKey&&e.key==='c'){e.preventDefault();print(promptText()+inputEl.value+'\x1b[31m^C\x1b[0m');inputEl.value='';refreshPrompt();return;}
+  if(e.ctrlKey&&e.key==='u'){e.preventDefault();inputEl.value='';return;}
+});
+document.addEventListener('click',(e)=>{
+  if(nanoOpen)return;
+  if(state.inputMode)return;
+  if(!state.running)return;
+  if(window.getSelection&&String(window.getSelection()).length)return;
+  if(e.target.tagName!=='INPUT')inputEl.focus();
+});
+
+/* ═══════════════════════════════════════════════════════════
+   START
+   ═══════════════════════════════════════════════════════════ */
 async function main(){
-  var restored=loadFS();
+  const restored=loadFS();
   if(!restored){
     FS=defaultFS();
     ensureBins();
@@ -2725,6 +2729,7 @@ async function main(){
   }
   loadShellState();
   state.env.PWD=state.cwd;
+
   try{
     await bootSystem();
   }catch(e){
